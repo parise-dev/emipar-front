@@ -4,7 +4,24 @@ export const API_BASE = "https://api.emipar.life";
 async function parseError(res: Response): Promise<string> {
   try {
     const j = await res.json();
-    return j?.error || j?.message || JSON.stringify(j);
+
+    if (typeof j?.error === "string") {
+      return j.error;
+    }
+
+    if (typeof j?.message === "string") {
+      return j.message;
+    }
+
+    if (j?.error?.error?.message) {
+      return j.error.error.message;
+    }
+
+    if (j?.error?.message) {
+      return j.error.message;
+    }
+
+    return JSON.stringify(j);
   } catch {
     try {
       return await res.text();

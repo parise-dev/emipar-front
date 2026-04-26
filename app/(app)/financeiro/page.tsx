@@ -113,6 +113,36 @@ export default function FinanceiroPage() {
     });
   }, [items, tipo, descricao, origem, dataInicio, dataFim]);
 
+  function aplicarPeriodo(tipo: "hoje" | "semana" | "mes") {
+  const hoje = new Date();
+
+  const format = (d: Date) => d.toISOString().slice(0, 10);
+
+  if (tipo === "hoje") {
+    const data = format(hoje);
+    setDataInicio(data);
+    setDataFim(data);
+    return;
+  }
+
+  if (tipo === "semana") {
+    const inicio = new Date(hoje);
+    const dia = inicio.getDay();
+    const diff = dia === 0 ? -6 : 1 - dia;
+    inicio.setDate(inicio.getDate() + diff);
+
+    setDataInicio(format(inicio));
+    setDataFim(format(hoje));
+    return;
+  }
+
+  if (tipo === "mes") {
+    const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    setDataInicio(format(inicio));
+    setDataFim(format(hoje));
+  }
+}
+
   function limpar() {
     setTipo("");
     setDescricao("");
@@ -226,7 +256,28 @@ export default function FinanceiroPage() {
             </button>
           </div>
         </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+  <button
+    onClick={() => aplicarPeriodo("hoje")}
+    className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50"
+  >
+    Hoje
+  </button>
 
+  <button
+    onClick={() => aplicarPeriodo("semana")}
+    className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50"
+  >
+    Esta semana
+  </button>
+
+  <button
+    onClick={() => aplicarPeriodo("mes")}
+    className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50"
+  >
+    Este mês
+  </button>
+</div>
         <div className="mt-3 grid gap-2 md:grid-cols-6">
           <label className="grid gap-1 md:col-span-1">
             <span className="text-xs text-zinc-600">Tipo</span>

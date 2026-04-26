@@ -13,11 +13,13 @@ import {
   Settings,
   Menu,
   X,
+  MessageSquareMore,
 } from "lucide-react";
 
 const nav = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Atendimento", href: "/atendimento", icon: Headset },
+  { label: "WhatsApp", href: "/whatsapp", icon: MessageSquareMore },
   { label: "Envios", href: "/envios", icon: Truck },
   { label: "Financeiro", href: "/financeiro", icon: Wallet },
   { label: "Estoque", href: "/estoque", icon: Package },

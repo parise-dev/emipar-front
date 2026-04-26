@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { BoletoDialog } from "@/components/envios/boleto-dialog";
+import { MessageCircle, X, MapPinned } from "lucide-react";
 
 type Pedido = any;
 const API = "https://api.emipar.life";
@@ -21,11 +22,106 @@ export function ClientSheet({
   const router = useRouter();
   const pathname = usePathname();
 
+  async function abrirWhatsappCliente() {
+  if (!form?.phone && !form?.id) {
+    alert("Cliente sem telefone.");
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams();
+
+    if (form?.phone) params.set("phone", String(form.phone));
+    if (form?.id) params.set("clientId", String(form.id));
+
+    const res = await fetch(`${API}/whatsapp/conversations/find?${params.toString()}`, {
+      cache: "no-store",
+    });
+
+    const data = await res.json();
+
+    if (data?.success && data?.exists && data?.data?.id) {
+      onOpenChange(false);
+      router.push(`/whatsapp?conversationId=${data.data.id}`);
+      return;
+    }
+
+    setTemplatePickerOpen(true);
+  } catch (error) {
+    console.error("Erro ao buscar conversa do WhatsApp:", error);
+    alert("Erro ao verificar conversa do WhatsApp.");
+  }
+}
+
+async function enviarTemplateConfirmarPedido() {
+  if (!form?.phone) {
+  showToast("error", "Cliente sem telefone.");
+  return;
+}
+
+  try {
+    setSendingTemplate(true);
+
+    const qtdProduto = `${Number(form.quantidade || 1)} ${form.produto || "ERONMAX"}`;
+
+    const cidadeCompleta = [
+      form.endereco?.bairro,
+      form.endereco?.localidade || form.endereco?.cidade,
+      form.endereco?.uf || form.endereco?.estado,
+    ]
+      .filter(Boolean)
+      .join(" - ");
+
+    const res = await fetch(`${API}/whatsapp/send-template/confirmar-pedido`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: String(form.phone),
+        clientId: form.id || "",
+        conversationId: "",
+        nome: form.nome || "Cliente",
+        nome_rep: "Carlos",
+        emprs: "EMIPAR LIFE",
+        qtd: qtdProduto,
+        rua: form.endereco?.logradouro || "Endereço não informado",
+        cidade: cidadeCompleta || "Cidade não informada",
+        n: form.endereco?.numero || "S/N",
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data?.success) {
+      throw new Error(
+        typeof data?.error === "string"
+          ? data.error
+          : data?.error?.error?.message || "Erro ao enviar template."
+      );
+    }
+
+    setTemplatePickerOpen(false);
+    showToast("success", "Template enviado para processamento.");
+  } catch (error) {
+    console.error("Erro ao enviar template:", error);
+    showToast(
+  "error",
+  error instanceof Error ? error.message : "Erro ao enviar template."
+);
+  } finally {
+    setSendingTemplate(false);
+  }
+}
+
   const [saving, setSaving] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
   const [form, setForm] = useState<any>(null);
   const [boletoOpen, setBoletoOpen] = useState(false);
-
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+const [sendingTemplate, setSendingTemplate] = useState(false);
+const [toast, setToast] = useState<{
+  type: "success" | "error";
+  message: string;
+} | null>(null);
   function normalizeStatusPedidoUI(s?: string) {
     if (!s) return "Novo";
     if (s === "Aberto") return "Novo"; // compat legado
@@ -72,6 +168,8 @@ export function ClientSheet({
   }, [pedido?.id]);
 
   const canShow = useMemo(() => open && !!form, [open, form]);
+
+  
 
   async function salvarCliente() {
     if (!form?.id) return;
@@ -138,6 +236,14 @@ export function ClientSheet({
       setSaving(false);
     }
   }
+
+  function showToast(type: "success" | "error", message: string) {
+  setToast({ type, message });
+
+  window.setTimeout(() => {
+    setToast(null);
+  }, 3500);
+}
 
   async function cancelarPedido() {
     if (!form?.id) return;
@@ -284,10 +390,10 @@ if (data?.cliente) {
   if (!canShow) return null;
 
   return (
-    <div className="fixed inset-0 z-50">
+    <div className="fixed inset-0 z-[10000]">
       <button className="absolute inset-0 bg-black/30" onClick={closeSheet} />
 
-      <div className="absolute right-0 top-0 h-full w-full max-w-3xl bg-white shadow-xl">
+      <div className="absolute right-0 top-0 flex h-full w-full max-w-3xl flex-col overflow-hidden bg-white shadow-xl">
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div>
             <div className="text-lg font-semibold">Detalhes do Cliente</div>
@@ -301,7 +407,7 @@ if (data?.cliente) {
           </button>
         </div>
 
-        <div className="h-[calc(100%-120px)] overflow-auto p-5 space-y-6">
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5 pb-28">
           <Section title="Informações do Cliente">
             <Grid>
               <Field
@@ -578,7 +684,8 @@ if (data?.cliente) {
           ) : null}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t px-5 py-4">
+        <div className="shrink-0 border-t bg-white px-5 py-4">
+  <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={cancelarPedido}
             disabled={saving}
@@ -594,6 +701,14 @@ if (data?.cliente) {
           >
             {saving ? "Salvando..." : "Salvar alterações"}
           </button>
+          <button
+  onClick={abrirWhatsappCliente}
+  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-zinc-50"
+>
+  <MessageCircle className="h-4 w-4" />
+  Iniciar conversa
+</button>
+        </div>
         </div>
 
         {labelOpen && (
@@ -611,7 +726,59 @@ if (data?.cliente) {
           cliente={form}
           onConfirm={gerarBoleto}
         />
+        {templatePickerOpen && (
+  <div className="fixed inset-0 z-[10020] flex items-center justify-center bg-black/40 p-4">
+    <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <div className="text-lg font-semibold text-zinc-900">
+            Escolher template
+          </div>
+          <div className="mt-1 text-sm text-zinc-500">
+            Esse cliente ainda não tem conversa aberta. Escolha um template aprovado para iniciar.
+          </div>
+        </div>
+
+        <button
+          onClick={() => setTemplatePickerOpen(false)}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-zinc-500 hover:bg-zinc-100"
+        >
+          <X className="h-5 w-5" />
+        </button>
       </div>
+
+      <button
+        disabled={sendingTemplate}
+        onClick={enviarTemplateConfirmarPedido}
+        className="flex w-full items-center gap-3 rounded-2xl border border-zinc-200 p-4 text-left transition hover:bg-zinc-50 disabled:opacity-60"
+      >
+        <MapPinned className="h-5 w-5 text-zinc-600" />
+
+        <div>
+          <div className="text-sm font-semibold text-zinc-900">
+            Confirmar endereço
+          </div>
+          <div className="text-xs text-zinc-500">
+            Envia o template aprovado confirmar_pedido.
+          </div>
+        </div>
+      </button>
+    </div>
+  </div>
+)}
+      </div>
+      {toast && (
+  <div
+    className={[
+      "absolute right-5 top-5 z-[10030] rounded-2xl px-4 py-3 text-sm font-semibold shadow-xl",
+      toast.type === "success"
+        ? "bg-emerald-600 text-white"
+        : "bg-rose-600 text-white",
+    ].join(" ")}
+  >
+    {toast.message}
+  </div>
+)}
     </div>
   );
 }

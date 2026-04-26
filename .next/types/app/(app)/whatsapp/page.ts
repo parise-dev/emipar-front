@@ -1,8 +1,8 @@
-// File: C:\Users\Lucas Parise\Downloads\emipar-crm-v4-item3\app\(auth)\login\page.tsx
-import * as entry from '../../../../../app/(auth)/login/page.js'
+// File: C:\Users\Lucas Parise\Downloads\emipar-front\app\(app)\whatsapp\page.tsx
+import * as entry from '../../../../../app/(app)/whatsapp/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
-type TEntry = typeof import('../../../../../app/(auth)/login/page.js')
+type TEntry = typeof import('../../../../../app/(app)/whatsapp/page.js')
 
 // Check that the entry is a valid entry
 checkFields<Diff<{

@@ -1,4 +1,4 @@
-// File: C:\Users\Lucas Parise\Downloads\emipar-crm-v4-item3\app\page.tsx
+// File: C:\Users\Lucas Parise\Downloads\emipar-front\app\page.tsx
 import * as entry from '../../../app/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
