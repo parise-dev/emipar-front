@@ -1,7 +1,0 @@
-{
-  "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
-  "/(app)/whatsapp/page": "app/(app)/whatsapp/page.js",
-  "/(app)/atendimento/page": "app/(app)/atendimento/page.js",
-  "/(app)/envios/page": "app/(app)/envios/page.js",
-  "/(app)/financeiro/page": "app/(app)/financeiro/page.js"
-}
