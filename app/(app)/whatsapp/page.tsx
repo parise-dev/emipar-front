@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   BadgeDollarSign,
   Check,
+  CornerDownLeft,
   CheckCheck,
   ClipboardList,
   Clock3,
@@ -253,15 +254,22 @@ export default function WhatsAppPage() {
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
+
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "todos" | ClientPipelineStatus
   >("todos");
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(
+    null,
+  );
+  const [imageCaption, setImageCaption] = useState("");
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -291,10 +299,10 @@ export default function WhatsAppPage() {
       const mappedChats: ChatItem[] = response.data
         .sort((a, b) => {
           const dateA = new Date(
-            a.updatedAt || a.lastTime || a.createdAt || 0,
+            a.lastTime || a.updatedAt || a.createdAt || 0,
           ).getTime();
           const dateB = new Date(
-            b.updatedAt || b.lastTime || b.createdAt || 0,
+            b.lastTime || b.updatedAt || b.createdAt || 0,
           ).getTime();
 
           return dateB - dateA;
@@ -367,23 +375,32 @@ export default function WhatsAppPage() {
   }
 
   async function retryFailedMessage(item: ChatMessage) {
-  if (!selectedChat) return;
+    if (!selectedChat) return;
 
-  if (item.type === "text" && item.text) {
-    await appendTextMessageToSelected(item.text);
+    if (item.type === "text" && item.text) {
+      await appendTextMessageToSelected(item.text);
 
-    setChats((prev) =>
-      prev.map((chat) =>
-        chat.id === selectedChat.id
-          ? {
-              ...chat,
-              messages: chat.messages.filter((msg) => msg.id !== item.id),
-            }
-          : chat,
-      ),
-    );
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === selectedChat.id
+            ? {
+                ...chat,
+                messages: chat.messages.filter((msg) => msg.id !== item.id),
+              }
+            : chat,
+        ),
+      );
+    }
   }
-}
+
+  function sortMessagesByDate(messages: ChatMessage[]) {
+    return [...messages].sort((a, b) => {
+      const dateA = new Date(a.createdAt || 0).getTime();
+      const dateB = new Date(b.createdAt || 0).getTime();
+
+      return dateA - dateB;
+    });
+  }
 
   async function loadMessages(conversationId: string) {
     try {
@@ -439,7 +456,10 @@ export default function WhatsAppPage() {
 
           return {
             ...chat,
-            messages: [...mappedMessages, ...temporaryMessagesNotYetSynced],
+            messages: sortMessagesByDate([
+              ...mappedMessages,
+              ...temporaryMessagesNotYetSynced,
+            ]),
           };
         }),
       );
@@ -826,38 +846,54 @@ export default function WhatsAppPage() {
   }
 
   async function handleSendAudio() {
-    if (!audioBlob || !audioPreviewUrl || !selectedChat) return;
+  if (!audioBlob || !audioPreviewUrl || !selectedChat) return;
 
-    appendAudioMessageToSelected(audioBlob, audioPreviewUrl);
+  const currentAudioBlob = audioBlob;
+  const currentAudioPreviewUrl = audioPreviewUrl;
+  const currentSelectedChat = selectedChat;
 
-    const formData = new FormData();
-    formData.append("audio", audioBlob, `audio-${Date.now()}.webm`);
-    formData.append("to", selectedChat.phone);
-    formData.append("clientId", selectedChat.clientId || "");
-    formData.append("conversationId", selectedChat.id);
+  appendAudioMessageToSelected(currentAudioBlob, currentAudioPreviewUrl);
 
-    try {
-      await fetch("https://api.emipar.life/whatsapp/send-audio", {
-        method: "POST",
-        body: formData,
-      });
+  const formData = new FormData();
 
-      await loadConversations();
+  formData.append("audio", currentAudioBlob, `audio-${Date.now()}.webm`);
+  formData.append("to", currentSelectedChat.phone);
+  formData.append("clientId", currentSelectedChat.clientId || "");
+  formData.append("conversationId", currentSelectedChat.id);
 
-      window.setTimeout(() => {
-        loadMessages(selectedChat.id);
-      }, 1500);
-    } catch (error) {
-      console.error("Erro ao enviar áudio para API:", error);
-      alert("Erro ao enviar áudio");
+  try {
+    const response = await fetch("https://api.emipar.life/whatsapp/send-audio", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.error("Erro API send-audio:", data);
+      throw new Error(data?.error || "Erro ao enviar áudio");
     }
 
     setAudioBlob(null);
     setAudioPreviewUrl(null);
     setRecordingSeconds(0);
-  }
 
-  async function handleSendImage(file: File) {
+    await loadConversations();
+
+    window.setTimeout(() => {
+      loadMessages(currentSelectedChat.id);
+    }, 1500);
+  } catch (error) {
+    console.error("Erro ao enviar áudio para API:", error);
+
+    const message =
+      error instanceof Error ? error.message : "Erro ao enviar áudio";
+
+    alert(message);
+  }
+}
+
+  async function handleSendImage(file: File, caption = "") {
     if (!selectedChat) return;
 
     const previewUrl = URL.createObjectURL(file);
@@ -871,9 +907,10 @@ export default function WhatsAppPage() {
         const newMessage: ChatMessage = {
           id: tempMessageId,
           fromMe: true,
-          text: "",
+          text: caption,
           mediaUrl: previewUrl,
           time,
+          createdAt: getNowISO(),
           status: "pending",
           type: "image",
           mimeType: file.type,
@@ -882,7 +919,7 @@ export default function WhatsAppPage() {
 
         return {
           ...chat,
-          lastMessage: "🖼️ Imagem",
+          lastMessage: caption || "🖼️ Imagem",
           lastTime: time,
           messages: [...chat.messages, newMessage],
         };
@@ -894,7 +931,7 @@ export default function WhatsAppPage() {
     formData.append("to", selectedChat.phone);
     formData.append("clientId", selectedChat.clientId || "");
     formData.append("conversationId", selectedChat.id);
-    formData.append("caption", "");
+    formData.append("caption", caption);
 
     try {
       const response = await fetch(
@@ -917,6 +954,31 @@ export default function WhatsAppPage() {
     } catch (error) {
       console.error("Erro ao enviar imagem:", error);
       alert("Erro ao enviar imagem");
+    }
+  }
+
+  async function sendPresetImageWithCaption() {
+    if (!selectedChat) return;
+
+    try {
+      const imagePath = "/images/atalhos/pedido-embalando.jpg";
+
+      const response = await fetch(imagePath);
+      const blob = await response.blob();
+
+      const file = new File([blob], "pedido-embalando.jpg", {
+        type: blob.type || "image/jpeg",
+      });
+
+      const caption =
+        "Acabei de pedir para as meninas aqui no escritório embalar seu pedido ✅🙏";
+
+      await handleSendImage(file, caption);
+
+      setIsActionsOpen(false);
+    } catch (error) {
+      console.error("Erro ao enviar imagem pronta:", error);
+      alert("Erro ao enviar imagem pronta.");
     }
   }
 
@@ -1087,49 +1149,6 @@ export default function WhatsAppPage() {
           : "h-[calc(100vh-105px)] overflow-hidden",
       ].join(" ")}
     >
-      {!isFullscreen && (
-        <div className="mb-4 hidden items-center justify-between md:flex">
-          <div>
-            <h1 className="text-2xl font-semibold">WhatsApp</h1>
-            <p className="text-sm text-zinc-500">
-              Central de conversas e atendimento.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {(
-              [
-                "todos",
-                "aguardando_envio",
-                "aguardando_chegar",
-                "a_pagar",
-                "pago",
-                "calote",
-              ] as const
-            ).map((status) => {
-              const active = statusFilter === status;
-              const label =
-                status === "todos" ? "Todos" : STATUS_META[status].label;
-
-              return (
-                <button
-                  key={status}
-                  onClick={() => setStatusFilter(status)}
-                  className={[
-                    "rounded-2xl border px-3 py-2 text-xs font-medium transition",
-                    active
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50",
-                  ].join(" ")}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       <div
         className={[
           "h-full overflow-hidden border border-zinc-200 bg-white shadow-[0_20px_60px_rgba(0,0,0,0.08)]",
@@ -1155,9 +1174,60 @@ export default function WhatsAppPage() {
                   </div>
                 </div>
 
-                <button className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50">
-                  <MoreVertical className="h-5 w-5" />
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setIsFilterMenuOpen((prev) => !prev)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50"
+                    title="Filtrar conversas"
+                  >
+                    <MoreVertical className="h-5 w-5" />
+                  </button>
+
+                  {isFilterMenuOpen && (
+                    <div className="absolute right-0 top-12 z-50 w-64 rounded-2xl border border-zinc-200 bg-white p-2 shadow-xl">
+                      <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                        Filtrar conversas
+                      </div>
+
+                      {(
+                        [
+                          "todos",
+                          "aguardando_envio",
+                          "aguardando_chegar",
+                          "a_pagar",
+                          "pago",
+                          "calote",
+                        ] as const
+                      ).map((status) => {
+                        const active = statusFilter === status;
+                        const label =
+                          status === "todos"
+                            ? "Todos"
+                            : STATUS_META[status].label;
+
+                        return (
+                          <button
+                            key={status}
+                            onClick={() => {
+                              setStatusFilter(status);
+                              setIsFilterMenuOpen(false);
+                            }}
+                            className={[
+                              "flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition",
+                              active
+                                ? "bg-zinc-900 font-semibold text-white"
+                                : "text-zinc-700 hover:bg-zinc-100",
+                            ].join(" ")}
+                          >
+                            <span>{label}</span>
+
+                            {active && <Check className="h-4 w-4" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <label className="flex h-12 items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4">
@@ -1438,15 +1508,17 @@ export default function WhatsAppPage() {
                             <div className="mt-2 flex items-center justify-end gap-1 text-[11px] text-zinc-500">
                               <span>{item.time}</span>
                               {item.fromMe && item.status === "failed" ? (
-  <button
-    onClick={() => retryFailedMessage(item)}
-    className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-600 hover:bg-rose-100"
-  >
-    reenviar
-  </button>
-) : (
-  item.fromMe && <StatusIcon status={item.status} />
-)}
+                                <button
+                                  onClick={() => retryFailedMessage(item)}
+                                  className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-600 hover:bg-rose-100"
+                                >
+                                  reenviar
+                                </button>
+                              ) : (
+                                item.fromMe && (
+                                  <StatusIcon status={item.status} />
+                                )
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1510,6 +1582,7 @@ export default function WhatsAppPage() {
 
                       <button
                         onClick={handleSendAudio}
+                         title="Enviar áudio"
                         className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm transition hover:bg-emerald-700"
                       >
                         <SendHorizonal className="h-5 w-5" />
@@ -1535,7 +1608,10 @@ export default function WhatsAppPage() {
                           if (!file) return;
 
                           if (file.type.startsWith("image/")) {
-                            handleSendImage(file);
+                            const preview = URL.createObjectURL(file);
+                            setPendingImageFile(file);
+                            setPendingImagePreview(preview);
+                            setImageCaption("");
                           } else {
                             handleSendDocument(file);
                           }
@@ -1565,24 +1641,24 @@ export default function WhatsAppPage() {
 
                       <button
                         onClick={handleStartRecording}
-                        className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 sm:inline-flex"
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100"
+                        title="Gravar áudio"
                       >
                         <Mic className="h-5 w-5" />
                       </button>
 
                       <button
-                        onClick={
+                        onClick={handleSendTypedMessage}
+                        disabled={!message.trim()}
+                        className={[
+                          "inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full shadow-sm transition",
                           message.trim()
-                            ? handleSendTypedMessage
-                            : handleStartRecording
-                        }
-                        className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm transition hover:bg-emerald-700"
+                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                            : "cursor-not-allowed bg-zinc-200 text-zinc-400",
+                        ].join(" ")}
+                        title="Enviar mensagem"
                       >
-                        {message.trim() ? (
-                          <SendHorizonal className="h-5 w-5" />
-                        ) : (
-                          <Mic className="h-5 w-5" />
-                        )}
+                        <CornerDownLeft className="h-5 w-5" />
                       </button>
                     </div>
                   )}
@@ -1650,6 +1726,20 @@ export default function WhatsAppPage() {
                       <div className="text-sm font-semibold">1° Áudio</div>
                       <div className="text-xs text-zinc-500">
                         Enviar áudio pronto de cobrança.
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={sendPresetImageWithCaption}
+                    className="flex items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50"
+                  >
+                    <PackageCheck className="h-5 w-5 text-zinc-600" />
+                    <div>
+                      <div className="text-sm font-semibold">
+                        Foto embalando pedido
+                      </div>
+                      <div className="text-xs text-zinc-500">
+                        Foto pronta com legenda
                       </div>
                     </div>
                   </button>
@@ -1739,6 +1829,70 @@ export default function WhatsAppPage() {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingImageFile && pendingImagePreview && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-4 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold text-zinc-900">
+                  Enviar imagem
+                </div>
+                <div className="text-sm text-zinc-500">
+                  Adicione uma mensagem antes de enviar.
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  URL.revokeObjectURL(pendingImagePreview);
+                  setPendingImageFile(null);
+                  setPendingImagePreview(null);
+                  setImageCaption("");
+                }}
+                className="rounded-full p-2 hover:bg-zinc-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <img
+              src={pendingImagePreview}
+              alt="Prévia da imagem"
+              className="max-h-[420px] w-full rounded-2xl object-contain bg-zinc-100"
+            />
+
+            <div className="mt-4 flex items-end gap-2">
+              <textarea
+                value={imageCaption}
+                onChange={(e) => setImageCaption(e.target.value)}
+                rows={2}
+                placeholder="Digite uma mensagem para acompanhar a imagem..."
+                className="max-h-[120px] min-h-[52px] flex-1 resize-none rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+
+              <button
+                onClick={async () => {
+                  const file = pendingImageFile;
+                  const preview = pendingImagePreview;
+                  const caption = imageCaption.trim();
+
+                  setPendingImageFile(null);
+                  setPendingImagePreview(null);
+                  setImageCaption("");
+
+                  URL.revokeObjectURL(preview);
+
+                  await handleSendImage(file, caption);
+                }}
+                className="h-12 rounded-2xl bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                Enviar
+              </button>
             </div>
           </div>
         </div>

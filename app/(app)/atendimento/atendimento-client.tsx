@@ -244,102 +244,109 @@ export default function AtendimentoPage() {
   }, [orders]);
 
   async function handleMassTemplateSend() {
-    setSendingMass(true);
+  setSendingMass(true);
 
-    const total = selectedIds.length;
+  const total = selectedIds.length;
 
-    setMassProgress({
-      total,
-      done: 0,
-      success: 0,
-      error: 0,
-    });
-
-    try {
-      for (const id of selectedIds) {
-        const cliente = orders.find((o) => o.id === id);
-
-        if (!cliente) {
-          setMassProgress((prev) => ({
-            ...prev,
-            done: prev.done + 1,
-            error: prev.error + 1,
-          }));
-          continue;
-        }
-
-        try {
-          const res = await fetch(
-            `${API}/whatsapp/send-template/confirmar-pedido`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                to: cliente.phone,
-                clientId: cliente.id,
-                conversationId: "",
-                nome: cliente.nome || "Cliente",
-                nome_rep: "Carlos",
-                emprs: "EMIPAR LIFE",
-                qtd: `${cliente.quantidade || 1} ${cliente.produto || "ERONMAX"}`,
-                rua: cliente.endereco?.logradouro || "Endereço não informado",
-                cidade:
-                  `${cliente.endereco?.bairro || ""} ${cliente.endereco?.localidade || ""} ${cliente.endereco?.uf || ""}`.trim() ||
-                  "Cidade não informada",
-                n: cliente.endereco?.numero || "S/N",
-              }),
-            },
-          );
-
-          const data = await res.json().catch(() => null);
-
-          if (!res.ok || !data?.success) {
-            throw new Error("Falha ao enviar");
-          }
-
-          if (
-  !data?.pending &&
-  data?.conversationId &&
-  (cliente.status_pedido === "Novo" || cliente.status_pedido === "Aberto")
-) {
-  await fetch(`${API}/clientes/${cliente.id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      status_pedido: "Andamento",
-    }),
+  setMassProgress({
+    total,
+    done: 0,
+    success: 0,
+    error: 0,
   });
 
-  setOrders((prev) =>
-    prev.map((pedido) =>
-      pedido.id === cliente.id
-        ? { ...pedido, status_pedido: "Andamento" }
-        : pedido,
-    ),
-  );
-}
+  try {
+    for (const id of selectedIds) {
+      const cliente = orders.find((o) => o.id === id);
 
-          setMassProgress((prev) => ({
-            ...prev,
-            done: prev.done + 1,
-            success: prev.success + 1,
-          }));
-        } catch {
-          setMassProgress((prev) => ({
-            ...prev,
-            done: prev.done + 1,
-            error: prev.error + 1,
-          }));
-        }
-
-        await new Promise((r) => setTimeout(r, 900));
+      if (!cliente) {
+        setMassProgress((prev) => ({
+          ...prev,
+          done: prev.done + 1,
+          error: prev.error + 1,
+        }));
+        continue;
       }
 
-      setSelectedIds([]);
-    } finally {
-      setSendingMass(false);
+      try {
+        const res = await fetch(`${API}/whatsapp/send-template/confirmar-pedido`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: cliente.phone,
+            clientId: cliente.id,
+            conversationId: "",
+            nome: cliente.nome || "Cliente",
+            nome_rep: "Carlos",
+            emprs: "EMIPAR LIFE",
+            qtd: `${cliente.quantidade || 1} ${cliente.produto || "ERONMAX"}`,
+            rua: cliente.endereco?.logradouro || "Endereço não informado",
+            cidade:
+              `${cliente.endereco?.bairro || ""} ${cliente.endereco?.localidade || ""} ${cliente.endereco?.uf || ""}`.trim() ||
+              "Cidade não informada",
+            n: cliente.endereco?.numero || "S/N",
+          }),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data?.success) {
+          throw new Error("Falha ao enviar");
+        }
+
+        /**
+         * Só atualiza para Andamento quando:
+         * - já existe conversa no WhatsApp interno;
+         * - backend retornou conversationId;
+         * - não ficou pendente aguardando webhook;
+         * - pedido ainda está Novo/Aberto.
+         *
+         * Cliente novo com pending=true será atualizado pelo webhook,
+         * somente se a Meta confirmar envio/entrega/leitura.
+         */
+        if (
+          !data?.pending &&
+          data?.conversationId &&
+          (cliente.status_pedido === "Novo" || cliente.status_pedido === "Aberto")
+        ) {
+          await fetch(`${API}/clientes/${cliente.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status_pedido: "Andamento",
+            }),
+          });
+
+          setOrders((prev) =>
+            prev.map((pedido) =>
+              pedido.id === cliente.id
+                ? { ...pedido, status_pedido: "Andamento" }
+                : pedido,
+            ),
+          );
+        }
+
+        setMassProgress((prev) => ({
+          ...prev,
+          done: prev.done + 1,
+          success: prev.success + 1,
+        }));
+      } catch {
+        setMassProgress((prev) => ({
+          ...prev,
+          done: prev.done + 1,
+          error: prev.error + 1,
+        }));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 900));
     }
+
+    setSelectedIds([]);
+  } finally {
+    setSendingMass(false);
   }
+}
 
   async function updateStatus(id: string, status_pedido: string) {
     // otimista
