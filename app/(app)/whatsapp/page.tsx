@@ -317,6 +317,9 @@ export default function WhatsAppPage() {
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sendingCodigoRastreio, setSendingCodigoRastreio] = useState(false);
   const [sendingConfirmarPedido, setSendingConfirmarPedido] = useState(false);
+
+  const [showManualRastreioInput, setShowManualRastreioInput] = useState(false);
+  const [manualCodigoRastreio, setManualCodigoRastreio] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "todos" | ClientPipelineStatus
@@ -680,37 +683,37 @@ export default function WhatsAppPage() {
   }
 
   async function appendTextMessageToSelected(text: string) {
-  if (!selectedChat) return;
+    if (!selectedChat) return;
 
-  setMessage("");
-  setIsActionsOpen(false);
+    setMessage("");
+    setIsActionsOpen(false);
 
-  try {
-    const response = await apiJson<{
-      success: boolean;
-      conversationId: string;
-      data: any;
-    }>("/whatsapp/send-text", {
-      method: "POST",
-      body: JSON.stringify({
-        to: selectedChat.phone,
-        message: text,
-        clientId: selectedChat.clientId,
-        conversationId: selectedChat.id,
-      }),
-    });
+    try {
+      const response = await apiJson<{
+        success: boolean;
+        conversationId: string;
+        data: any;
+      }>("/whatsapp/send-text", {
+        method: "POST",
+        body: JSON.stringify({
+          to: selectedChat.phone,
+          message: text,
+          clientId: selectedChat.clientId,
+          conversationId: selectedChat.id,
+        }),
+      });
 
-    await loadMessages(response.conversationId || selectedChat.id);
-    await loadConversations();
-  } catch (error) {
-    console.error("Erro ao enviar mensagem:", error);
+      await loadMessages(response.conversationId || selectedChat.id);
+      await loadConversations();
+    } catch (error) {
+      console.error("Erro ao enviar mensagem:", error);
 
-    const errorMessage =
-      error instanceof Error ? error.message : "Erro ao enviar mensagem";
+      const errorMessage =
+        error instanceof Error ? error.message : "Erro ao enviar mensagem";
 
-    showToast("error", errorMessage);
+      showToast("error", errorMessage);
+    }
   }
-}
 
   function appendAudioMessageToSelected(blob: Blob, url: string) {
     if (!selectedChat) return;
@@ -1126,72 +1129,129 @@ export default function WhatsAppPage() {
   }
 
   async function sendConfirmarPedidoTemplate() {
-  if (!selectedChat) return;
+    if (!selectedChat) return;
 
-  if (sendingConfirmarPedido) return;
+    if (sendingConfirmarPedido) return;
 
-  const endereco = parseEndereco(selectedChat.address);
+    const endereco = parseEndereco(selectedChat.address);
 
-  try {
-    setSendingConfirmarPedido(true);
+    try {
+      setSendingConfirmarPedido(true);
 
-    await apiJson<{
-      success: boolean;
-      conversationId: string;
-      data: any;
-    }>("/whatsapp/send-template/confirmar-pedido", {
-      method: "POST",
-      body: JSON.stringify({
-        to: selectedChat.phone,
-        clientId: selectedChat.clientId || "",
-        conversationId: selectedChat.id,
-        nome: selectedChat.name,
-        nome_rep: "Carlos",
-        emprs: "EMIPAR LIFE",
-        qtd: selectedChat.product || selectedChat.tag || "1 ERONMAX",
-        rua: endereco.rua,
-        cidade: endereco.cidade,
-        n: endereco.numero,
-      }),
-    });
+      await apiJson<{
+        success: boolean;
+        conversationId: string;
+        data: any;
+      }>("/whatsapp/send-template/confirmar-pedido", {
+        method: "POST",
+        body: JSON.stringify({
+          to: selectedChat.phone,
+          clientId: selectedChat.clientId || "",
+          conversationId: selectedChat.id,
+          nome: selectedChat.name,
+          nome_rep: "Carlos",
+          emprs: "EMIPAR LIFE",
+          qtd: selectedChat.product || selectedChat.tag || "1 ERONMAX",
+          rua: endereco.rua,
+          cidade: endereco.cidade,
+          n: endereco.numero,
+        }),
+      });
 
-    setIsActionsOpen(false);
+      setIsActionsOpen(false);
 
-    showToast(
-      "success",
-      "Template de confirmação enviado. Aguardando confirmação do WhatsApp.",
-    );
+      showToast(
+        "success",
+        "Template de confirmação enviado. Aguardando confirmação do WhatsApp.",
+      );
 
-    await loadMessages(selectedChat.id);
-    await loadConversations();
-  } catch (error) {
-    console.error("Erro ao enviar template confirmar_pedido:", error);
+      await loadMessages(selectedChat.id);
+      await loadConversations();
+    } catch (error) {
+      console.error("Erro ao enviar template confirmar_pedido:", error);
 
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Erro ao enviar template de confirmação de pedido";
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar template de confirmação de pedido";
 
-    showToast("error", message);
-  } finally {
-    setSendingConfirmarPedido(false);
+      showToast("error", message);
+    } finally {
+      setSendingConfirmarPedido(false);
+    }
   }
-}
 
-  async function sendCodigoRastreioTemplate() {
+  async function sendCodigoRastreioTemplate(codigoManual?: string) {
     if (!selectedChat) return;
 
     if (sendingCodigoRastreio) return;
 
-    const codigoRastreio = selectedChat.codigo_rastreio?.trim();
+    const codigoRastreio =
+      codigoManual?.trim() || selectedChat.codigo_rastreio?.trim() || "";
+
     const hasClientId = Boolean(selectedChat.clientId);
 
     if (!codigoRastreio && !hasClientId) {
+      setShowManualRastreioInput(true);
+      setManualCodigoRastreio("");
+
       showToast(
         "error",
-        "Código de rastreio não encontrado e essa conversa não está vinculada a um cliente.",
+        "Código de rastreio não encontrado. Digite manualmente para enviar.",
       );
+
       return;
+    }
+
+    if (!codigoRastreio && hasClientId) {
+      try {
+        setSendingCodigoRastreio(true);
+
+        const response = await apiJson<{
+          success: boolean;
+          conversationId: string;
+          data: any;
+        }>("/whatsapp/send-template/cod-rastreio", {
+          method: "POST",
+          body: JSON.stringify({
+            to: selectedChat.phone,
+            clientId: selectedChat.clientId || "",
+            conversationId: selectedChat.id,
+            nome: selectedChat.name,
+            codigo_rastreio: "",
+          }),
+        });
+
+        setIsActionsOpen(false);
+        setShowManualRastreioInput(false);
+        setManualCodigoRastreio("");
+
+        showToast(
+          "success",
+          "Template de rastreio enviado. Aguardando confirmação do WhatsApp.",
+        );
+
+        await loadMessages(response.conversationId || selectedChat.id);
+        await loadConversations();
+
+        return;
+      } catch (error) {
+        console.error("Erro ao buscar/enviar rastreio pelo cliente:", error);
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Código de rastreio não encontrado. Digite manualmente para enviar.";
+
+        setShowManualRastreioInput(true);
+        setManualCodigoRastreio("");
+
+        showToast("error", message);
+
+        return;
+      } finally {
+        setSendingCodigoRastreio(false);
+      }
     }
 
     try {
@@ -1208,11 +1268,13 @@ export default function WhatsAppPage() {
           clientId: selectedChat.clientId || "",
           conversationId: selectedChat.id,
           nome: selectedChat.name,
-          codigo_rastreio: codigoRastreio || "",
+          codigo_rastreio: codigoRastreio,
         }),
       });
 
       setIsActionsOpen(false);
+      setShowManualRastreioInput(false);
+      setManualCodigoRastreio("");
 
       showToast(
         "success",
@@ -1233,6 +1295,17 @@ export default function WhatsAppPage() {
     } finally {
       setSendingCodigoRastreio(false);
     }
+  }
+
+  function handleEnviarCodigoRastreioManual() {
+    const codigo = manualCodigoRastreio.trim();
+
+    if (!codigo) {
+      showToast("error", "Digite o código de rastreio antes de enviar.");
+      return;
+    }
+
+    sendCodigoRastreioTemplate(codigo);
   }
 
   const selectedStatusMeta = selectedChat
@@ -1838,7 +1911,11 @@ export default function WhatsAppPage() {
                 </div>
 
                 <button
-                  onClick={() => setIsActionsOpen(false)}
+                  onClick={() => {
+    setIsActionsOpen(false);
+    setShowManualRastreioInput(false);
+    setManualCodigoRastreio("");
+  }}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-zinc-600 hover:bg-zinc-100"
                 >
                   <X className="h-5 w-5" />
@@ -1941,33 +2018,35 @@ export default function WhatsAppPage() {
                       </div>
                     </button>
 
-                   <button
-  onClick={sendConfirmarPedidoTemplate}
-  disabled={sendingConfirmarPedido || sendingCodigoRastreio}
-  className={[
-    "flex items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50",
-    sendingConfirmarPedido || sendingCodigoRastreio
-      ? "cursor-not-allowed opacity-60"
-      : "",
-  ].join(" ")}
->
-  {sendingConfirmarPedido ? (
-    <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
-  ) : (
-    <MapPinned className="h-5 w-5 text-zinc-600" />
-  )}
+                    <button
+                      onClick={sendConfirmarPedidoTemplate}
+                      disabled={sendingConfirmarPedido || sendingCodigoRastreio}
+                      className={[
+                        "flex items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50",
+                        sendingConfirmarPedido || sendingCodigoRastreio
+                          ? "cursor-not-allowed opacity-60"
+                          : "",
+                      ].join(" ")}
+                    >
+                      {sendingConfirmarPedido ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
+                      ) : (
+                        <MapPinned className="h-5 w-5 text-zinc-600" />
+                      )}
 
-  <div>
-    <div className="text-sm font-semibold">
-      {sendingConfirmarPedido ? "Enviando confirmação..." : "Confirmar endereço"}
-    </div>
-    <div className="text-xs text-zinc-500">
-      Enviar endereço do cliente.
-    </div>
-  </div>
-</button>
-                 <button
-  onClick={sendCodigoRastreioTemplate}
+                      <div>
+                        <div className="text-sm font-semibold">
+                          {sendingConfirmarPedido
+                            ? "Enviando confirmação..."
+                            : "Confirmar endereço"}
+                        </div>
+                        <div className="text-xs text-zinc-500">
+                          Enviar endereço do cliente.
+                        </div>
+                      </div>
+                    </button>
+                    <button
+  onClick={() => sendCodigoRastreioTemplate()}
   disabled={sendingCodigoRastreio || sendingConfirmarPedido}
   className={[
     "flex items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50",
@@ -1993,6 +2072,56 @@ export default function WhatsAppPage() {
     </div>
   </div>
 </button>
+{showManualRastreioInput && (
+  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+    <div className="mb-2 text-sm font-semibold text-amber-900">
+      Código de rastreio não encontrado
+    </div>
+
+    <div className="mb-3 text-xs leading-relaxed text-amber-800">
+      Digite o código manualmente para enviar o template para este cliente.
+    </div>
+
+    <input
+      value={manualCodigoRastreio}
+      onChange={(e) => setManualCodigoRastreio(e.target.value.toUpperCase())}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          handleEnviarCodigoRastreioManual();
+        }
+      }}
+      placeholder="Ex: TUHGQTKI"
+      className="mb-3 h-11 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold uppercase outline-none focus:ring-2 focus:ring-amber-300"
+    />
+
+    <div className="flex items-center justify-end gap-2">
+      <button
+        type="button"
+        onClick={() => {
+          setShowManualRastreioInput(false);
+          setManualCodigoRastreio("");
+        }}
+        disabled={sendingCodigoRastreio}
+        className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        Cancelar
+      </button>
+
+      <button
+        type="button"
+        onClick={handleEnviarCodigoRastreioManual}
+        disabled={sendingCodigoRastreio}
+        className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {sendingCodigoRastreio && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        )}
+        Enviar rastreio
+      </button>
+    </div>
+  </div>
+)}
                   </div>
                 </div>
 
