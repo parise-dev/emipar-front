@@ -317,13 +317,13 @@ export default function WhatsAppPage() {
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sendingCodigoRastreio, setSendingCodigoRastreio] = useState(false);
   const [sendingConfirmarPedido, setSendingConfirmarPedido] = useState(false);
-
+  
   const [showManualRastreioInput, setShowManualRastreioInput] = useState(false);
   const [manualCodigoRastreio, setManualCodigoRastreio] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<
-    "todos" | ClientPipelineStatus
-  >("todos");
+  "todos" | "nao_lidas" | ClientPipelineStatus
+>("todos");
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
@@ -345,6 +345,7 @@ export default function WhatsAppPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollToBottomRef = useRef(false);
+  const initialUrlParamsHandledRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastUnreadTotalRef = useRef(0);
@@ -414,30 +415,33 @@ export default function WhatsAppPage() {
         }),
       );
 
-      const params = new URLSearchParams(window.location.search);
-      const conversationIdFromUrl = params.get("conversationId");
-      const phoneFromUrl = params.get("phone");
-      const clientIdFromUrl = params.get("clientId");
+      if (!initialUrlParamsHandledRef.current) {
+        initialUrlParamsHandledRef.current = true;
 
-      const chatFromUrl = mappedChats.find((chat) => {
-        return (
-          (conversationIdFromUrl && chat.id === conversationIdFromUrl) ||
-          (phoneFromUrl && chat.phone === phoneFromUrl) ||
-          (clientIdFromUrl && chat.clientId === clientIdFromUrl)
-        );
-      });
+        const params = new URLSearchParams(window.location.search);
+        const conversationIdFromUrl = params.get("conversationId");
+        const phoneFromUrl = params.get("phone");
+        const clientIdFromUrl = params.get("clientId");
 
-      if (chatFromUrl) {
-        setSelectedId(chatFromUrl.id);
-        setMobileView("chat");
-        shouldScrollToBottomRef.current = true;
-        loadMessages(chatFromUrl.id);
-        markConversationAsRead(chatFromUrl.id);
-        return;
-      }
+        const chatFromUrl = mappedChats.find((chat) => {
+          return (
+            (conversationIdFromUrl && chat.id === conversationIdFromUrl) ||
+            (phoneFromUrl && chat.phone === phoneFromUrl) ||
+            (clientIdFromUrl && chat.clientId === clientIdFromUrl)
+          );
+        });
 
-      if (mappedChats.length > 0) {
-        setSelectedId((current) => current || mappedChats[0].id);
+        if (chatFromUrl) {
+          setSelectedId(chatFromUrl.id);
+          setMobileView("chat");
+          shouldScrollToBottomRef.current = true;
+          loadMessages(chatFromUrl.id);
+          markConversationAsRead(chatFromUrl.id);
+
+          window.history.replaceState(null, "", "/whatsapp");
+
+          return;
+        }
       }
     } catch (error) {
       console.error("Erro ao carregar conversas:", error);
@@ -560,6 +564,36 @@ export default function WhatsAppPage() {
     }
   }
 
+  async function markConversationAsUnread(conversationId: string) {
+    try {
+      await apiJson(`/whatsapp/conversations/${conversationId}/unread`, {
+        method: "PUT",
+      });
+
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === conversationId
+            ? {
+                ...chat,
+                unread: Math.max(chat.unread || 0, 1),
+              }
+            : chat,
+        ),
+      );
+
+      showToast("success", "Conversa marcada como não lida.");
+    } catch (error) {
+      console.error("Erro ao marcar como não lido:", error);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Erro ao marcar conversa como não lida";
+
+      showToast("error", message);
+    }
+  }
+
   const filteredChats = useMemo(() => {
     const term = search.trim().toLowerCase();
 
@@ -571,14 +605,15 @@ export default function WhatsAppPage() {
         (chat.tag || "").toLowerCase().includes(term);
 
       const matchesStatus =
-        statusFilter === "todos" || chat.pipelineStatus === statusFilter;
+  statusFilter === "todos" ||
+  (statusFilter === "nao_lidas" && (chat.unread || 0) > 0) ||
+  chat.pipelineStatus === statusFilter;
 
       return matchesSearch && matchesStatus;
     });
   }, [search, statusFilter, chats]);
 
-  const selectedChat =
-    chats.find((chat) => chat.id === selectedId) ?? filteredChats[0] ?? null;
+  const selectedChat = chats.find((chat) => chat.id === selectedId) ?? null;
 
   useEffect(() => {
     if (!selectedId) return;
@@ -1410,6 +1445,7 @@ export default function WhatsAppPage() {
                         {(
                           [
                             "todos",
+                            "nao_lidas",
                             "aguardando_envio",
                             "aguardando_chegar",
                             "a_pagar",
@@ -1419,9 +1455,11 @@ export default function WhatsAppPage() {
                         ).map((status) => {
                           const active = statusFilter === status;
                           const label =
-                            status === "todos"
-                              ? "Todos"
-                              : STATUS_META[status].label;
+  status === "todos"
+    ? "Todos"
+    : status === "nao_lidas"
+      ? "Não lidas"
+      : STATUS_META[status].label;
 
                           return (
                             <button
@@ -1889,8 +1927,22 @@ export default function WhatsAppPage() {
                   </footer>
                 </>
               ) : (
-                <div className="flex flex-1 items-center justify-center p-8 text-center text-zinc-500">
-                  Selecione uma conversa.
+                <div className="flex flex-1 items-center justify-center bg-[#f8fafc] p-8">
+                  <div className="max-w-md text-center">
+                    <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-[28px] bg-emerald-50 text-emerald-600 shadow-sm">
+                      <MessageCircle className="h-10 w-10" />
+                    </div>
+
+                    <h2 className="text-2xl font-bold text-zinc-900">
+                      Central de conversas
+                    </h2>
+
+                    <p className="mt-3 text-sm leading-6 text-zinc-500">
+                      Selecione uma conversa na lista ao lado para visualizar o
+                      histórico, responder clientes, enviar templates ou
+                      atualizar o andamento do pedido.
+                    </p>
+                  </div>
                 </div>
               )}
             </section>
@@ -1912,10 +1964,10 @@ export default function WhatsAppPage() {
 
                 <button
                   onClick={() => {
-    setIsActionsOpen(false);
-    setShowManualRastreioInput(false);
-    setManualCodigoRastreio("");
-  }}
+                    setIsActionsOpen(false);
+                    setShowManualRastreioInput(false);
+                    setManualCodigoRastreio("");
+                  }}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-zinc-600 hover:bg-zinc-100"
                 >
                   <X className="h-5 w-5" />
@@ -1923,6 +1975,32 @@ export default function WhatsAppPage() {
               </div>
 
               <div className="space-y-5">
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Conversa
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (!selectedChat) return;
+
+                      markConversationAsUnread(selectedChat.id);
+                      setIsActionsOpen(false);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50"
+                  >
+                    <MessageCircle className="h-5 w-5 text-zinc-600" />
+
+                    <div>
+                      <div className="text-sm font-semibold">
+                        Marcar como não lida
+                      </div>
+                      <div className="text-xs text-zinc-500">
+                        Deixar essa conversa destacada para atender depois.
+                      </div>
+                    </div>
+                  </button>
+                </div>
                 <div>
                   <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                     Templates e mensagens rápidas
@@ -2046,82 +2124,87 @@ export default function WhatsAppPage() {
                       </div>
                     </button>
                     <button
-  onClick={() => sendCodigoRastreioTemplate()}
-  disabled={sendingCodigoRastreio || sendingConfirmarPedido}
-  className={[
-    "flex items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50",
-    sendingCodigoRastreio || sendingConfirmarPedido
-      ? "cursor-not-allowed opacity-60"
-      : "",
-  ].join(" ")}
->
-  {sendingCodigoRastreio ? (
-    <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
-  ) : (
-    <Truck className="h-5 w-5 text-zinc-600" />
-  )}
+                      onClick={() => sendCodigoRastreioTemplate()}
+                      disabled={sendingCodigoRastreio || sendingConfirmarPedido}
+                      className={[
+                        "flex items-center gap-3 rounded-2xl border border-zinc-200 p-3 text-left hover:bg-zinc-50",
+                        sendingCodigoRastreio || sendingConfirmarPedido
+                          ? "cursor-not-allowed opacity-60"
+                          : "",
+                      ].join(" ")}
+                    >
+                      {sendingCodigoRastreio ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
+                      ) : (
+                        <Truck className="h-5 w-5 text-zinc-600" />
+                      )}
 
-  <div>
-    <div className="text-sm font-semibold">
-      {sendingCodigoRastreio
-        ? "Enviando rastreio..."
-        : "Enviar código de rastreio"}
-    </div>
-    <div className="text-xs text-zinc-500">
-      Template Loggi com nome e código do cliente.
-    </div>
-  </div>
-</button>
-{showManualRastreioInput && (
-  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-    <div className="mb-2 text-sm font-semibold text-amber-900">
-      Código de rastreio não encontrado
-    </div>
+                      <div>
+                        <div className="text-sm font-semibold">
+                          {sendingCodigoRastreio
+                            ? "Enviando rastreio..."
+                            : "Enviar código de rastreio"}
+                        </div>
+                        <div className="text-xs text-zinc-500">
+                          Template Loggi com nome e código do cliente.
+                        </div>
+                      </div>
+                    </button>
+                    {showManualRastreioInput && (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                        <div className="mb-2 text-sm font-semibold text-amber-900">
+                          Código de rastreio não encontrado
+                        </div>
 
-    <div className="mb-3 text-xs leading-relaxed text-amber-800">
-      Digite o código manualmente para enviar o template para este cliente.
-    </div>
+                        <div className="mb-3 text-xs leading-relaxed text-amber-800">
+                          Digite o código manualmente para enviar o template
+                          para este cliente.
+                        </div>
 
-    <input
-      value={manualCodigoRastreio}
-      onChange={(e) => setManualCodigoRastreio(e.target.value.toUpperCase())}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          handleEnviarCodigoRastreioManual();
-        }
-      }}
-      placeholder="Ex: TUHGQTKI"
-      className="mb-3 h-11 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold uppercase outline-none focus:ring-2 focus:ring-amber-300"
-    />
+                        <input
+                          value={manualCodigoRastreio}
+                          onChange={(e) =>
+                            setManualCodigoRastreio(
+                              e.target.value.toUpperCase(),
+                            )
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleEnviarCodigoRastreioManual();
+                            }
+                          }}
+                          placeholder="Ex: TUHGQTKI"
+                          className="mb-3 h-11 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold uppercase outline-none focus:ring-2 focus:ring-amber-300"
+                        />
 
-    <div className="flex items-center justify-end gap-2">
-      <button
-        type="button"
-        onClick={() => {
-          setShowManualRastreioInput(false);
-          setManualCodigoRastreio("");
-        }}
-        disabled={sendingCodigoRastreio}
-        className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        Cancelar
-      </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowManualRastreioInput(false);
+                              setManualCodigoRastreio("");
+                            }}
+                            disabled={sendingCodigoRastreio}
+                            className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Cancelar
+                          </button>
 
-      <button
-        type="button"
-        onClick={handleEnviarCodigoRastreioManual}
-        disabled={sendingCodigoRastreio}
-        className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {sendingCodigoRastreio && (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        )}
-        Enviar rastreio
-      </button>
-    </div>
-  </div>
-)}
+                          <button
+                            type="button"
+                            onClick={handleEnviarCodigoRastreioManual}
+                            disabled={sendingCodigoRastreio}
+                            className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {sendingCodigoRastreio && (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            )}
+                            Enviar rastreio
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
