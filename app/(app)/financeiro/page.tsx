@@ -2,11 +2,37 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AddMovDialog } from "@/components/financeiro/add-mov-dialog";
-import { addRegistro, FinanceiroRegistro, loadRegistros } from "@/lib/financeiro-store";
+import {
+  addRegistro,
+  FinanceiroRegistro,
+  loadRegistros,
+} from "@/lib/financeiro-store";
 import { Coins, X, Plus } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 
 type TipoFilter = "" | "Entrada" | "Saída";
+
+type FinanceiroPeriodFilter =
+  | "todos"
+  | "hoje"
+  | "ontem"
+  | "semana"
+  | "mes"
+  | "mes_passado"
+  | "personalizado";
+
+const FINANCEIRO_PERIOD_FILTERS: {
+  value: FinanceiroPeriodFilter;
+  label: string;
+}[] = [
+  { value: "todos", label: "Todos" },
+  { value: "hoje", label: "Hoje" },
+  { value: "ontem", label: "Ontem" },
+  { value: "semana", label: "Semana" },
+  { value: "mes", label: "Mês" },
+  { value: "mes_passado", label: "Mês passado" },
+  { value: "personalizado", label: "Personalizado" },
+];
 
 function toBRL(v: number) {
   const n = Number(v || 0);
@@ -44,7 +70,8 @@ export default function FinanceiroPage() {
   const [origem, setOrigem] = useState("");
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
-
+  const [periodFilter, setPeriodFilter] =
+    useState<FinanceiroPeriodFilter>("mes");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
@@ -53,19 +80,48 @@ export default function FinanceiroPage() {
       setLoading(true);
       setErr("");
 
-      // ✅ tenta API primeiro
-      const r = await fetch(`${API_BASE}/financeiro`, { cache: "no-store" });
+      const params = new URLSearchParams();
+
+      if (periodFilter !== "todos") {
+        params.set("periodo", periodFilter);
+      }
+
+      if (tipo) {
+        params.set("tipo", tipo);
+      }
+
+      if (periodFilter === "personalizado") {
+        if (!dataInicio || !dataFim) {
+          setItems([]);
+          return;
+        }
+
+        params.set("inicio", dataInicio);
+        params.set("fim", dataFim);
+      }
+
+      const queryString = params.toString();
+
+      const url = queryString
+        ? `${API_BASE}/financeiro/filtro?${queryString}`
+        : `${API_BASE}/financeiro`;
+
+      const r = await fetch(url, { cache: "no-store" });
       if (!r.ok) throw new Error(await r.text());
 
       const j = (await r.json()) as ApiMov[];
       const normalized = Array.isArray(j) ? j.map(normalizeApiItem) : [];
 
-      // ordena por data desc
-      normalized.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+      normalized.sort(
+        (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime(),
+      );
+
       setItems(normalized);
     } catch (e: any) {
-      // ✅ fallback: store local (não trava tua tela)
-      setErr(e?.message || "Erro ao carregar financeiro. Mostrando dados locais.");
+      setErr(
+        e?.message || "Erro ao carregar financeiro. Mostrando dados locais.",
+      );
+
       try {
         setItems(loadRegistros());
       } catch {
@@ -79,7 +135,7 @@ export default function FinanceiroPage() {
   useEffect(() => {
     carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [periodFilter, tipo, dataInicio, dataFim]);
 
   const totals = useMemo(() => {
     const entradas = items
@@ -95,55 +151,35 @@ export default function FinanceiroPage() {
     return items.filter((it) => {
       if (tipo && it.tipo !== tipo) return false;
 
-      if (descricao && !(it.descricao || "").toLowerCase().includes(descricao.toLowerCase()))
+      if (
+        descricao &&
+        !(it.descricao || "").toLowerCase().includes(descricao.toLowerCase())
+      )
         return false;
 
-      if (origem && !(it.origem || "").toLowerCase().includes(origem.toLowerCase()))
+      if (
+        origem &&
+        !(it.origem || "").toLowerCase().includes(origem.toLowerCase())
+      )
         return false;
 
-      if (dataInicio) {
-        const di = new Date(dataInicio + "T00:00:00");
-        if (new Date(it.data) < di) return false;
-      }
-      if (dataFim) {
-        const df = new Date(dataFim + "T23:59:59");
-        if (new Date(it.data) > df) return false;
+      if (periodFilter === "personalizado") {
+        if (dataInicio) {
+          const di = new Date(dataInicio + "T00:00:00");
+          if (new Date(it.data) < di) return false;
+        }
+
+        if (dataFim) {
+          const df = new Date(dataFim + "T23:59:59");
+          if (new Date(it.data) > df) return false;
+        }
       }
       return true;
     });
   }, [items, tipo, descricao, origem, dataInicio, dataFim]);
 
-  function aplicarPeriodo(tipo: "hoje" | "semana" | "mes") {
-  const hoje = new Date();
-
-  const format = (d: Date) => d.toISOString().slice(0, 10);
-
-  if (tipo === "hoje") {
-    const data = format(hoje);
-    setDataInicio(data);
-    setDataFim(data);
-    return;
-  }
-
-  if (tipo === "semana") {
-    const inicio = new Date(hoje);
-    const dia = inicio.getDay();
-    const diff = dia === 0 ? -6 : 1 - dia;
-    inicio.setDate(inicio.getDate() + diff);
-
-    setDataInicio(format(inicio));
-    setDataFim(format(hoje));
-    return;
-  }
-
-  if (tipo === "mes") {
-    const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-    setDataInicio(format(inicio));
-    setDataFim(format(hoje));
-  }
-}
-
   function limpar() {
+    setPeriodFilter("mes");
     setTipo("");
     setDescricao("");
     setOrigem("");
@@ -195,7 +231,7 @@ export default function FinanceiroPage() {
 
       alert(
         (e?.message || "Falha ao salvar na API.") +
-          "\nSalvei localmente para não perder. Depois você pode sincronizar."
+          "\nSalvei localmente para não perder. Depois você pode sincronizar.",
       );
     }
   }
@@ -209,7 +245,9 @@ export default function FinanceiroPage() {
           </div>
           <div>
             <h1 className="text-2xl font-semibold">Financeiro</h1>
-            <p className="text-sm text-zinc-500">Entradas, saídas e controle do saldo.</p>
+            <p className="text-sm text-zinc-500">
+              Entradas, saídas e controle do saldo.
+            </p>
           </div>
         </div>
 
@@ -238,9 +276,21 @@ export default function FinanceiroPage() {
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-3">
-        <KpiCard title="Entradas" value={loading ? "..." : toBRL(totals.entradas)} tone="success" />
-        <KpiCard title="Saídas" value={loading ? "..." : toBRL(totals.saidas)} tone="danger" />
-        <KpiCard title="Saldo Atual" value={loading ? "..." : toBRL(totals.saldo)} tone="neutral" />
+        <KpiCard
+          title="Entradas"
+          value={loading ? "..." : toBRL(totals.entradas)}
+          tone="success"
+        />
+        <KpiCard
+          title="Saídas"
+          value={loading ? "..." : toBRL(totals.saidas)}
+          tone="danger"
+        />
+        <KpiCard
+          title="Saldo Atual"
+          value={loading ? "..." : toBRL(totals.saldo)}
+          tone="neutral"
+        />
       </div>
 
       <div className="rounded-2xl border bg-white p-4">
@@ -256,27 +306,33 @@ export default function FinanceiroPage() {
             </button>
           </div>
         </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-  <button
-    onClick={() => aplicarPeriodo("hoje")}
-    className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50"
-  >
-    Hoje
-  </button>
+        <div className="mt-3 flex flex-wrap gap-2">
+  {FINANCEIRO_PERIOD_FILTERS.map((filter) => {
+    const active = periodFilter === filter.value;
 
-  <button
-    onClick={() => aplicarPeriodo("semana")}
-    className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50"
-  >
-    Esta semana
-  </button>
+    return (
+      <button
+        key={filter.value}
+        type="button"
+        onClick={() => {
+          setPeriodFilter(filter.value);
 
-  <button
-    onClick={() => aplicarPeriodo("mes")}
-    className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50"
-  >
-    Este mês
-  </button>
+          if (filter.value !== "personalizado") {
+            setDataInicio("");
+            setDataFim("");
+          }
+        }}
+        className={[
+          "rounded-xl border px-3 py-2 text-sm font-semibold shadow-sm transition",
+          active
+            ? "border-emerald-200 bg-emerald-600 text-white shadow-emerald-600/20"
+            : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50",
+        ].join(" ")}
+      >
+        {filter.label}
+      </button>
+    );
+  })}
 </div>
         <div className="mt-3 grid gap-2 md:grid-cols-6">
           <label className="grid gap-1 md:col-span-1">
@@ -292,17 +348,46 @@ export default function FinanceiroPage() {
             </select>
           </label>
 
-          <Field label="Descrição" value={descricao} onChange={setDescricao} className="md:col-span-2" />
-          <Field label="Origem" value={origem} onChange={setOrigem} className="md:col-span-1" />
-          <Field label="De" type="date" value={dataInicio} onChange={setDataInicio} className="md:col-span-1" />
-          <Field label="Até" type="date" value={dataFim} onChange={setDataFim} className="md:col-span-1" />
+          <Field
+            label="Descrição"
+            value={descricao}
+            onChange={setDescricao}
+            className="md:col-span-2"
+          />
+          <Field
+            label="Origem"
+            value={origem}
+            onChange={setOrigem}
+            className="md:col-span-1"
+          />
+          {periodFilter === "personalizado" && (
+  <>
+    <Field
+      label="De"
+      type="date"
+      value={dataInicio}
+      onChange={setDataInicio}
+      className="md:col-span-1"
+    />
+
+    <Field
+      label="Até"
+      type="date"
+      value={dataFim}
+      onChange={setDataFim}
+      className="md:col-span-1"
+    />
+  </>
+)}
         </div>
       </div>
 
       <div className="rounded-2xl border bg-white">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-medium">Movimentações</div>
-          <div className="text-xs text-zinc-500">{loading ? "..." : `${filtered.length} itens`}</div>
+          <div className="text-xs text-zinc-500">
+            {loading ? "..." : `${filtered.length} itens`}
+          </div>
         </div>
 
         <div className="overflow-auto">
@@ -321,23 +406,37 @@ export default function FinanceiroPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td className="px-4 py-8 text-center text-zinc-500" colSpan={6}>
+                  <td
+                    className="px-4 py-8 text-center text-zinc-500"
+                    colSpan={6}
+                  >
                     Carregando...
                   </td>
                 </tr>
               ) : (
                 <>
                   {filtered.map((it) => (
-                    <tr key={it.id} className="border-b last:border-b-0 hover:bg-zinc-50">
+                    <tr
+                      key={it.id}
+                      className="border-b last:border-b-0 hover:bg-zinc-50"
+                    >
                       <td className="px-4 py-3">
                         <TipoPill tipo={it.tipo} />
                       </td>
                       <td className="px-4 py-3">{it.categoria}</td>
                       <td className="px-4 py-3">{it.descricao}</td>
                       <td className="px-4 py-3">{it.origem}</td>
-                      <td className="px-4 py-3">{new Date(it.data).toLocaleDateString("pt-BR")}</td>
+                      <td className="px-4 py-3">
+                        {new Date(it.data).toLocaleDateString("pt-BR")}
+                      </td>
                       <td className="px-4 py-3 font-medium">
-                        <span className={it.tipo === "Entrada" ? "text-emerald-700" : "text-rose-700"}>
+                        <span
+                          className={
+                            it.tipo === "Entrada"
+                              ? "text-emerald-700"
+                              : "text-rose-700"
+                          }
+                        >
                           {toBRL(it.valor)}
                         </span>
                       </td>
@@ -346,7 +445,10 @@ export default function FinanceiroPage() {
 
                   {filtered.length === 0 && (
                     <tr>
-                      <td className="px-4 py-8 text-center text-zinc-500" colSpan={6}>
+                      <td
+                        className="px-4 py-8 text-center text-zinc-500"
+                        colSpan={6}
+                      >
                         Nenhuma movimentação encontrada.
                       </td>
                     </tr>
@@ -376,8 +478,8 @@ function KpiCard({
     tone === "success"
       ? "text-emerald-700"
       : tone === "danger"
-      ? "text-rose-700"
-      : "text-zinc-900";
+        ? "text-rose-700"
+        : "text-zinc-900";
   return (
     <div className="rounded-2xl border bg-white p-6">
       <div className="text-sm text-zinc-500">{title}</div>
@@ -393,7 +495,11 @@ function TipoPill({ tipo }: { tipo: "Entrada" | "Saída" }) {
       ? "bg-emerald-50 text-emerald-800 border-emerald-200"
       : "bg-rose-50 text-rose-800 border-rose-200";
   return (
-    <span className={"inline-flex rounded-full border px-3 py-1 text-xs font-medium " + cls}>
+    <span
+      className={
+        "inline-flex rounded-full border px-3 py-1 text-xs font-medium " + cls
+      }
+    >
       {tipo}
     </span>
   );

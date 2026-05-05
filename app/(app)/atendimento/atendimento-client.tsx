@@ -50,6 +50,28 @@ type Pedido = {
   calote_motivo?: string;
 };
 
+type AtendimentoPeriodFilter =
+  | "todos"
+  | "hoje"
+  | "ontem"
+  | "semana"
+  | "mes"
+  | "mes_passado"
+  | "personalizado";
+
+const ATENDIMENTO_PERIOD_FILTERS: {
+  value: AtendimentoPeriodFilter;
+  label: string;
+}[] = [
+  { value: "todos", label: "Todos" },
+  { value: "hoje", label: "Hoje" },
+  { value: "ontem", label: "Ontem" },
+  { value: "semana", label: "Semana" },
+  { value: "mes", label: "Mês" },
+  { value: "mes_passado", label: "Mês passado" },
+  { value: "personalizado", label: "Personalizado" },
+];
+
 const API = "https://api.emipar.life";
 
 function formatDateBR(value?: string) {
@@ -122,6 +144,11 @@ export default function AtendimentoPage() {
   const lastOpenedRef = useRef<string>("");
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Pedido[]>([]);
+  const [periodFilter, setPeriodFilter] =
+  useState<AtendimentoPeriodFilter>("hoje");
+const [customStart, setCustomStart] = useState("");
+const [customEnd, setCustomEnd] = useState("");
+
   const [category, setCategory] = useState<
     "all" | "Novo" | "Andamento" | "Vendido"
   >("Novo");
@@ -140,18 +167,47 @@ export default function AtendimentoPage() {
     error: 0,
   });
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        const res = await fetch(`${API}/clientes`, { cache: "no-store" });
-        const data = (await res.json()) as Pedido[];
-        setOrders(Array.isArray(data) ? data : []);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  async function loadOrders() {
+  try {
+    setLoading(true);
+
+    const params = new URLSearchParams();
+
+if (periodFilter !== "todos") {
+  params.set("periodo", periodFilter);
+}
+
+if (periodFilter === "personalizado") {
+  if (!customStart || !customEnd) {
+    setOrders([]);
+    return;
+  }
+
+  params.set("inicio", customStart);
+  params.set("fim", customEnd);
+}
+
+const queryString = params.toString();
+
+const res = await fetch(
+  queryString ? `${API}/clientes?${queryString}` : `${API}/clientes`,
+  {
+    cache: "no-store",
+  },
+);
+
+    const data = (await res.json()) as Pedido[];
+
+    setOrders(Array.isArray(data) ? data : []);
+    setSelectedIds([]);
+  } finally {
+    setLoading(false);
+  }
+}
+
+useEffect(() => {
+  loadOrders();
+}, [periodFilter, customStart, customEnd]);
 
   // Quando vier ?open=<id>, abre o drawer
   useEffect(() => {
@@ -413,30 +469,67 @@ export default function AtendimentoPage() {
         <div>
           <h1 className="text-2xl font-semibold">Atendimento</h1>
           <p className="text-sm text-zinc-500">
-            Gerencie pedidos, status e dados do cliente.
-          </p>
+  Gerencie pedidos, status e dados do cliente por período.
+</p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            className="inline-flex items-center gap-2 rounded-xl border bg-white/70 px-3 py-2 text-sm font-medium shadow-sm hover:bg-white"
-            onClick={() => window.location.reload()}
-            title="Recarregar"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            Atualizar
-          </button>
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+  <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+    {ATENDIMENTO_PERIOD_FILTERS.map((filter) => {
+      const active = periodFilter === filter.value;
 
-          {/* 
-          <button className="inline-flex items-center gap-2 rounded-xl border bg-white/70 px-3 py-2 text-sm font-medium shadow-sm hover:bg-white">
-            <PlusCircle className="h-4 w-4" />
-            Criar registro
-          </button>*/}
-        </div>
+      return (
+        <button
+          key={filter.value}
+          type="button"
+          onClick={() => setPeriodFilter(filter.value)}
+          className={[
+            "rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition",
+            active
+              ? "border-emerald-200 bg-emerald-600 text-white shadow-emerald-600/20"
+              : "border-zinc-200 bg-white/80 text-zinc-700 hover:bg-zinc-50",
+          ].join(" ")}
+        >
+          {filter.label}
+        </button>
+      );
+    })}
+
+    <button
+      className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-white"
+      onClick={loadOrders}
+      title="Recarregar"
+      type="button"
+    >
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Sparkles className="h-4 w-4" />
+      )}
+      Atualizar
+    </button>
+  </div>
+
+  {periodFilter === "personalizado" && (
+    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white/70 p-2 shadow-sm">
+      <input
+        type="date"
+        value={customStart}
+        onChange={(e) => setCustomStart(e.target.value)}
+        className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+      />
+
+      <span className="text-xs font-semibold text-zinc-400">até</span>
+
+      <input
+        type="date"
+        value={customEnd}
+        onChange={(e) => setCustomEnd(e.target.value)}
+        className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+      />
+    </div>
+  )}
+</div>
       </div>
 
       {/* KPIs */}

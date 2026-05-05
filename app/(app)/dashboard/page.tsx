@@ -59,35 +59,82 @@ type DayDash = {
 
 type ApiDash = { hoje: DayDash; ontem: DayDash };
 
+type DashboardFilter =
+  | "hoje"
+  | "ontem"
+  | "semana"
+  | "mes"
+  | "mes_passado"
+  | "personalizado";
+
+const DASHBOARD_FILTERS: { value: DashboardFilter; label: string }[] = [
+  { value: "hoje", label: "Hoje" },
+  { value: "ontem", label: "Ontem" },
+  { value: "semana", label: "Semana" },
+  { value: "mes", label: "Mês" },
+  { value: "mes_passado", label: "Mês passado" },
+  { value: "personalizado", label: "Personalizado" },
+];
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
   const [hoje, setHoje] = useState<DayDash | null>(null);
   const [ontem, setOntem] = useState<DayDash | null>(null);
 
+  const [dashboardFilter, setDashboardFilter] =
+  useState<DashboardFilter>("hoje");
+const [customStart, setCustomStart] = useState("");
+const [customEnd, setCustomEnd] = useState("");
+
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        setLoading(true);
-        setErr("");
-        const r = await fetch(`${API_BASE}/dashboard/diario`, { cache: "no-store" });
-        if (!r.ok) throw new Error(await r.text());
-        const j = (await r.json()) as ApiDash;
-        if (!mounted) return;
-        setHoje(j.hoje);
-        setOntem(j.ontem);
-      } catch (e: any) {
-        if (!mounted) return;
-        setErr(e?.message || "Erro ao carregar dashboard");
-      } finally {
-        if (mounted) setLoading(false);
+  let mounted = true;
+
+  async function loadDashboard() {
+    try {
+      setLoading(true);
+      setErr("");
+
+      const params = new URLSearchParams();
+
+      params.set("periodo", dashboardFilter);
+
+      if (dashboardFilter === "personalizado") {
+        if (!customStart || !customEnd) {
+          setLoading(false);
+          return;
+        }
+
+        params.set("inicio", customStart);
+        params.set("fim", customEnd);
       }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+
+      const r = await fetch(`${API_BASE}/dashboard/diario?${params.toString()}`, {
+        cache: "no-store",
+      });
+
+      if (!r.ok) throw new Error(await r.text());
+
+      const j = (await r.json()) as ApiDash;
+
+      if (!mounted) return;
+
+      setHoje(j.hoje);
+      setOntem(j.ontem);
+    } catch (e: any) {
+      if (!mounted) return;
+      setErr(e?.message || "Erro ao carregar dashboard");
+    } finally {
+      if (mounted) setLoading(false);
+    }
+  }
+
+  loadDashboard();
+
+  return () => {
+    mounted = false;
+  };
+}, [dashboardFilter, customStart, customEnd]);
 
   // ✅ normaliza: funciona com API nova + antiga
   const norm = useMemo(() => {
@@ -187,18 +234,73 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
-          <p className="text-sm text-zinc-600">Resumo do dia (hoje e ontem) com base na sua API.</p>
-        </div>
-        <button
-          className="rounded-xl border bg-white/80 px-4 py-2 text-sm font-medium shadow-sm hover:bg-white"
-          onClick={() => window.location.reload()}
-        >
-          Atualizar
-        </button>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+  <div>
+    <h1 className="text-2xl font-semibold">Dashboard</h1>
+    <p className="text-sm text-zinc-600">
+      Resumo por período com base na sua API.
+    </p>
+  </div>
+
+  <div className="flex flex-col gap-2">
+    <div className="flex flex-wrap items-center gap-2">
+      {DASHBOARD_FILTERS.map((filter) => {
+        const active = dashboardFilter === filter.value;
+
+        return (
+          <button
+            key={filter.value}
+            type="button"
+            onClick={() => setDashboardFilter(filter.value)}
+            className={[
+              "rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition",
+              active
+                ? "border-emerald-200 bg-emerald-600 text-white shadow-emerald-600/20"
+                : "border-zinc-200 bg-white/80 text-zinc-700 hover:bg-zinc-50",
+            ].join(" ")}
+          >
+            {filter.label}
+          </button>
+        );
+      })}
+
+      <button
+        type="button"
+        className="rounded-xl border border-zinc-200 bg-white/80 px-4 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-white"
+        onClick={() => {
+          const current = dashboardFilter;
+          setDashboardFilter("hoje");
+
+          window.setTimeout(() => {
+            setDashboardFilter(current);
+          }, 0);
+        }}
+      >
+        Atualizar
+      </button>
+    </div>
+
+    {dashboardFilter === "personalizado" && (
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white/70 p-2 shadow-sm">
+        <input
+          type="date"
+          value={customStart}
+          onChange={(e) => setCustomStart(e.target.value)}
+          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+        />
+
+        <span className="text-xs font-semibold text-zinc-400">até</span>
+
+        <input
+          type="date"
+          value={customEnd}
+          onChange={(e) => setCustomEnd(e.target.value)}
+          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+        />
       </div>
+    )}
+  </div>
+</div>
 
       {err ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{err}</div>
