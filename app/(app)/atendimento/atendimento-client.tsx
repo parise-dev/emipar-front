@@ -398,7 +398,9 @@ useEffect(() => {
       await new Promise((resolve) => setTimeout(resolve, 900));
     }
 
-    setSelectedIds([]);
+       setSelectedIds([]);
+
+    await loadOrders();
   } finally {
     setSendingMass(false);
   }

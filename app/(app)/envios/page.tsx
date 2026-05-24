@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { ClientSheet } from "@/components/atendimento/client-sheet";
 import { PaymentDialog } from "@/components/envios/payment-dialog";
+import { LoggiRefundDialog } from "@/components/envios/loggi-refund-dialog";
 
 type Pedido = {
   id: string;
@@ -44,6 +45,21 @@ type Pedido = {
 
   status_extraviado?: "Pendente" | "Aberto" | "Finalizado" | string;
   extravio_resultado?: "Recebido" | "Perdido" | "" | string;
+  loggi_status?:
+    | ""
+    | "Em análise"
+    | "Aguardando reembolso"
+    | "Reembolsado"
+    | "Não aprovado"
+    | string;
+
+  loggi_motivo?: "" | "Cliente não pagou" | "Cliente não recebeu" | string;
+
+  loggi_data_abertura?: string;
+  loggi_data_atualizacao?: string;
+  loggi_valor_reembolso?: number;
+  loggi_data_reembolso?: string;
+  financeiro_reembolso_loggi_id?: string;
 
   codigo_rastreio?: string;
   valor_total?: number;
@@ -78,21 +94,101 @@ const API = "https://api.emipar.life";
 
 // ✅ ordem que você quer (incluindo Ag. Envio como "Aguardando envio")
 const cards = [
+  // ENVIO
   {
     key: "Etiqueta Gerada",
     title: "Aguardando envio",
     icon: CheckCircle2,
     tone: "neutral",
+    group: "Envio",
   },
-  { key: "Enviado", title: "Enviado", icon: Truck, tone: "sky" },
-  { key: "Entregue", title: "Entregue", icon: PackageCheck, tone: "emerald" },
-  { key: "Pendente", title: "Pendente", icon: Clock3, tone: "amber" },
-  { key: "Pago", title: "Pago", icon: BadgeDollarSign, tone: "green" },
-  { key: "Devolucao", title: "Devolução", icon: RotateCcw, tone: "neutral" },
-  { key: "Extravio", title: "Extravio", icon: AlertTriangle, tone: "rose" },
+  {
+    key: "Enviado",
+    title: "Enviado",
+    icon: Truck,
+    tone: "sky",
+    group: "Envio",
+  },
+  {
+    key: "Entregue",
+    title: "Entregue",
+    icon: PackageCheck,
+    tone: "emerald",
+    group: "Envio",
+  },
+  {
+    key: "Devolucao",
+    title: "Devolução",
+    icon: RotateCcw,
+    tone: "neutral",
+    group: "Envio",
+  },
+
+  // FINANCEIRO
+  {
+    key: "Pendente",
+    title: "Pendente",
+    icon: Clock3,
+    tone: "amber",
+    group: "Financeiro",
+  },
+  {
+    key: "Pago",
+    title: "Pago",
+    icon: BadgeDollarSign,
+    tone: "green",
+    group: "Financeiro",
+  },
+  {
+    key: "Calote",
+    title: "Calote",
+    icon: AlertTriangle,
+    tone: "rose",
+    group: "Financeiro",
+  },
+  {
+    key: "Extravio",
+    title: "Extravio",
+    icon: AlertTriangle,
+    tone: "rose",
+    group: "Financeiro",
+  },
+
+  // LOGGI
+  {
+    key: "LoggiEmAnalise",
+    title: "Em análise",
+    icon: Clock3,
+    tone: "amber",
+    group: "Loggi",
+  },
+  {
+    key: "LoggiAguardandoReembolso",
+    title: "Aguardando reembolso",
+    icon: BadgeDollarSign,
+    tone: "sky",
+    group: "Loggi",
+  },
+  {
+    key: "LoggiReembolsado",
+    title: "Reembolsado",
+    icon: PackageCheck,
+    tone: "green",
+    group: "Loggi",
+  },
+  {
+    key: "LoggiNaoAprovado",
+    title: "Não aprovado",
+    icon: AlertTriangle,
+    tone: "rose",
+    group: "Loggi",
+  },
 ] as const;
 
 type CardKey = (typeof cards)[number]["key"];
+
+
+
 
 function normPagamento(v?: string) {
   const s = String(v || "").trim();
@@ -112,6 +208,20 @@ function normText(v: any) {
     .trim();
 }
 
+function defaultLoggiMotivoByPagamento(statusPagamento?: string) {
+  const status = normPagamento(statusPagamento);
+
+  if (status === "Não Pago") {
+    return "Cliente não pagou";
+  }
+
+  if (status === "Extravio") {
+    return "Cliente não recebeu";
+  }
+
+  return "";
+}
+
 export default function EnviosPage() {
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Pedido[]>([]);
@@ -120,11 +230,21 @@ export default function EnviosPage() {
   const [customEnd, setCustomEnd] = useState("");
 
   const [active, setActive] = useState<CardKey>("Etiqueta Gerada");
+  
+  const [activeCardGroup, setActiveCardGroup] = useState<
+  "Envio" | "Financeiro" | "Loggi"
+>("Envio");
+
+const visibleCards = cards.filter((card) => card.group === activeCardGroup);
+
+
   const [selected, setSelected] = useState<any>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const [payOpen, setPayOpen] = useState(false);
   const [payCtx, setPayCtx] = useState<Pedido | null>(null);
+  const [loggiRefundOpen, setLoggiRefundOpen] = useState(false);
+  const [loggiRefundCtx, setLoggiRefundCtx] = useState<Pedido | null>(null);
 
   const [q, setQ] = useState("");
 
@@ -211,12 +331,36 @@ export default function EnviosPage() {
       );
     }
 
+    if (active === "Calote") {
+      return shipped.filter(
+        (c) => normPagamento(c.status_pagamento) === "Não Pago",
+      );
+    }
+
     if (active === "Extravio") {
-      return shipped.filter((c) => normEnvio(c.status_envio) === "Extravio");
+      return shipped.filter(
+        (c) => normPagamento(c.status_pagamento) === "Extravio",
+      );
     }
 
     if (active === "Devolucao") {
       return shipped.filter((c) => normEnvio(c.status_envio) === "Devolucao");
+    }
+
+    if (active === "LoggiEmAnalise") {
+      return shipped.filter((c) => c.loggi_status === "Em análise");
+    }
+
+    if (active === "LoggiAguardandoReembolso") {
+      return shipped.filter((c) => c.loggi_status === "Aguardando reembolso");
+    }
+
+    if (active === "LoggiReembolsado") {
+      return shipped.filter((c) => c.loggi_status === "Reembolsado");
+    }
+
+    if (active === "LoggiNaoAprovado") {
+      return shipped.filter((c) => c.loggi_status === "Não aprovado");
     }
 
     // ✅ aqui agora inclui "Ag. Envio" também
@@ -238,6 +382,8 @@ export default function EnviosPage() {
   const selectedOrders = useMemo(() => {
     return orders.filter((order) => selectedIds.includes(order.id));
   }, [orders, selectedIds]);
+
+  
 
   const allFilteredSelected =
     filtered.length > 0 &&
@@ -263,10 +409,17 @@ export default function EnviosPage() {
       if (se === "Enviado") base["Enviado"]++;
       if (se === "Entregue") base["Entregue"]++;
       if (se === "Devolucao") base["Devolucao"]++;
-      if (se === "Extravio") base["Extravio"]++;
 
       if (se === "Entregue" && sp === "Pendente") base["Pendente"]++;
       if (sp === "Pago") base["Pago"]++;
+      if (sp === "Não Pago") base["Calote"]++;
+      if (sp === "Extravio") base["Extravio"]++;
+
+      if (o.loggi_status === "Em análise") base["LoggiEmAnalise"]++;
+      if (o.loggi_status === "Aguardando reembolso")
+        base["LoggiAguardandoReembolso"]++;
+      if (o.loggi_status === "Reembolsado") base["LoggiReembolsado"]++;
+      if (o.loggi_status === "Não aprovado") base["LoggiNaoAprovado"]++;
     }
 
     return base;
@@ -333,6 +486,92 @@ export default function EnviosPage() {
     });
   }
 
+  async function onChangeLoggiMotivo(item: Pedido, novoMotivo: string) {
+    const next: Pedido = {
+      ...item,
+      loggi_motivo: novoMotivo,
+    };
+
+    setOrders((prev) => prev.map((p) => (p.id === item.id ? next : p)));
+
+    await fetch(`${API}/clientes/${item.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        loggi_motivo: novoMotivo,
+      }),
+    });
+  }
+
+  async function onChangeLoggiStatus(item: Pedido, novoStatus: string) {
+    if (novoStatus === "Reembolsado") {
+      setLoggiRefundCtx(item);
+      setLoggiRefundOpen(true);
+      return;
+    }
+
+    const motivoPadrao =
+      item.loggi_motivo || defaultLoggiMotivoByPagamento(item.status_pagamento);
+
+    const next: Pedido = {
+      ...item,
+      loggi_status: novoStatus,
+      loggi_motivo: motivoPadrao || item.loggi_motivo || "",
+    };
+
+    setOrders((prev) => prev.map((p) => (p.id === item.id ? next : p)));
+
+    await fetch(`${API}/clientes/${item.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        loggi_status: novoStatus,
+        ...(motivoPadrao ? { loggi_motivo: motivoPadrao } : {}),
+      }),
+    });
+  }
+
+  async function confirmarReembolsoLoggi(payload: {
+    valor_reembolso: number;
+    data_reembolso: string;
+  }) {
+    if (!loggiRefundCtx) return;
+
+    const dataISO = payload.data_reembolso
+      ? new Date(`${payload.data_reembolso}T12:00:00-03:00`).toISOString()
+      : new Date().toISOString();
+
+    const motivoPadrao =
+      loggiRefundCtx.loggi_motivo ||
+      defaultLoggiMotivoByPagamento(loggiRefundCtx.status_pagamento);
+
+    const next: Pedido = {
+      ...loggiRefundCtx,
+      loggi_status: "Reembolsado",
+      loggi_motivo: motivoPadrao || loggiRefundCtx.loggi_motivo || "",
+      loggi_valor_reembolso: payload.valor_reembolso,
+      loggi_data_reembolso: dataISO,
+    };
+
+    setOrders((prev) =>
+      prev.map((p) => (p.id === loggiRefundCtx.id ? next : p)),
+    );
+
+    await fetch(`${API}/clientes/${loggiRefundCtx.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        loggi_status: "Reembolsado",
+        loggi_motivo: motivoPadrao || loggiRefundCtx.loggi_motivo || "",
+        loggi_valor_reembolso: payload.valor_reembolso,
+        loggi_data_reembolso: dataISO,
+      }),
+    });
+
+    setLoggiRefundOpen(false);
+    setLoggiRefundCtx(null);
+  }
+
   function onChangeExtraviado(item: Pedido, novoStatus: string) {
     // só permite alterar se realmente estiver em extravio
     if (item.status_envio !== "Extravio") return;
@@ -362,7 +601,14 @@ export default function EnviosPage() {
     });
   }
 
-  const totalCols = active === "Extravio" ? 9 : 8;
+  const showLoggiColumns =
+    active === "Calote" ||
+    active === "Extravio" ||
+    active === "LoggiEmAnalise" ||
+    active === "LoggiAguardandoReembolso" ||
+    active === "LoggiReembolsado" ||
+    active === "LoggiNaoAprovado";
+  const totalCols = showLoggiColumns ? 10 : 8;
 
   function onChangeExtravioStatus(item: Pedido, status_extraviado: string) {
     const next: any = { ...item, status_extraviado };
@@ -544,8 +790,28 @@ export default function EnviosPage() {
       }
 
       setSelectedIds([]);
-    } finally {
-      setSendingMass(false);
+
+await loadOrders();
+} finally {
+  setSendingMass(false);
+}
+  }
+
+  function handleChangeCardGroup(group: "Envio" | "Financeiro" | "Loggi") {
+    setActiveCardGroup(group);
+
+    if (group === "Envio") {
+      setActive("Etiqueta Gerada");
+      return;
+    }
+
+    if (group === "Financeiro") {
+      setActive("Pendente");
+      return;
+    }
+
+    if (group === "Loggi") {
+      setActive("LoggiEmAnalise");
     }
   }
 
@@ -561,104 +827,135 @@ export default function EnviosPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-  <div>
-    <h1 className="text-2xl font-semibold">Envios</h1>
-    <p className="text-sm text-zinc-600">
-      Controle de etiqueta, envio, entrega e pagamento por período.
-    </p>
-  </div>
+        <div>
+          <h1 className="text-2xl font-semibold">Envios</h1>
+          <p className="text-sm text-zinc-600">
+            Controle de etiqueta, envio, entrega e pagamento por período.
+          </p>
+        </div>
 
-  <div className="flex flex-col items-start gap-2 lg:items-end">
-    <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
-      {ENVIOS_PERIOD_FILTERS.map((filter) => {
-        const activeFilter = periodFilter === filter.value;
+        <div className="flex flex-col items-start gap-2 lg:items-end">
+          <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+            {ENVIOS_PERIOD_FILTERS.map((filter) => {
+              const activeFilter = periodFilter === filter.value;
 
-        return (
-          <button
-            key={filter.value}
-            type="button"
-            onClick={() => setPeriodFilter(filter.value)}
-            className={[
-              "rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition",
-              activeFilter
-                ? "border-emerald-200 bg-emerald-600 text-white shadow-emerald-600/20"
-                : "border-zinc-200 bg-white/80 text-zinc-700 hover:bg-zinc-50",
-            ].join(" ")}
-          >
-            {filter.label}
-          </button>
-        );
-      })}
+              return (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setPeriodFilter(filter.value)}
+                  className={[
+                    "rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition",
+                    activeFilter
+                      ? "border-emerald-200 bg-emerald-600 text-white shadow-emerald-600/20"
+                      : "border-zinc-200 bg-white/80 text-zinc-700 hover:bg-zinc-50",
+                  ].join(" ")}
+                >
+                  {filter.label}
+                </button>
+              );
+            })}
 
-      <button
-        type="button"
-        className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-white"
-        onClick={loadOrders}
-        title="Recarregar"
-      >
-        {loading ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Sparkles className="h-4 w-4" />
-        )}
-        Atualizar
-      </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white/80 px-3 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-white"
+              onClick={loadOrders}
+              title="Recarregar"
+            >
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Atualizar
+            </button>
 
-      {selectedIds.length > 0 && (
-        <button
-          type="button"
-          onClick={openMassTemplateModal}
-          className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
-        >
-          <MessageCircle className="h-4 w-4" />
-          Enviar em massa ({selectedIds.length})
-        </button>
-      )}
+            {selectedIds.length > 0 && (
+              <button
+                type="button"
+                onClick={openMassTemplateModal}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+              >
+                <MessageCircle className="h-4 w-4" />
+                Enviar em massa ({selectedIds.length})
+              </button>
+            )}
 
-      <button
-        type="button"
-        className="inline-flex items-center gap-2 rounded-xl border bg-white/80 px-4 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-white"
-      >
-        <Plus className="h-4 w-4" />
-        Novo envio
-      </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-xl border bg-white/80 px-4 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-white"
+            >
+              <Plus className="h-4 w-4" />
+              Novo envio
+            </button>
+          </div>
+
+          {periodFilter === "personalizado" && (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white/70 p-2 shadow-sm">
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+              />
+
+              <span className="text-xs font-semibold text-zinc-400">até</span>
+
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <section className="rounded-2xl border border-zinc-200 bg-white/70 p-4">
+  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <h2 className="text-sm font-semibold text-zinc-800">
+        Visão de acompanhamento
+      </h2>
+      <p className="text-xs text-zinc-500">
+        Selecione o grupo para visualizar os indicadores sem poluir a tela.
+      </p>
     </div>
 
-    {periodFilter === "personalizado" && (
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white/70 p-2 shadow-sm">
-        <input
-          type="date"
-          value={customStart}
-          onChange={(e) => setCustomStart(e.target.value)}
-          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-        />
-
-        <span className="text-xs font-semibold text-zinc-400">até</span>
-
-        <input
-          type="date"
-          value={customEnd}
-          onChange={(e) => setCustomEnd(e.target.value)}
-          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-        />
-      </div>
-    )}
+    <div className="inline-flex rounded-2xl border border-zinc-200 bg-zinc-50 p-1">
+      {(["Envio", "Financeiro", "Loggi"] as const).map((group) => (
+        <button
+          key={group}
+          type="button"
+          onClick={() => handleChangeCardGroup(group)}
+          className={[
+            "rounded-xl px-4 py-2 text-xs font-semibold transition",
+            activeCardGroup === group
+              ? "bg-white text-zinc-950 shadow-sm"
+              : "text-zinc-500 hover:text-zinc-900",
+          ].join(" ")}
+        >
+          {group}
+        </button>
+      ))}
+    </div>
   </div>
-</div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
-        {cards.map((c) => (
-          <StatusCard
-            key={c.key}
-            title={c.title}
-            value={counts[c.key]}
-            active={active === c.key}
-            onClick={() => setActive(c.key)}
-            icon={c.icon}
-            tone={c.tone as any}
-          />
-        ))}
-      </div>
+  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    {visibleCards.map((c) => (
+      <StatusCard
+        key={c.key}
+        title={c.title}
+        value={counts[c.key]}
+        active={active === c.key}
+        onClick={() => setActive(c.key)}
+        icon={c.icon}
+        tone={c.tone as any}
+      />
+    ))}
+  </div>
+</section>
 
       <div className="cardPlus rounded-2xl border bg-white p-0">
         <div className="flex flex-col gap-3 border-b px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -726,9 +1023,14 @@ export default function EnviosPage() {
                 <th className="px-4 py-3 text-left">Qtd</th>
                 <th className="px-4 py-3 text-left">Status envio</th>
                 <th className="px-4 py-3 text-left">Status pagamento</th>
-                {active === "Extravio" && (
-                  <th className="px-4 py-3 text-left">Status extravio</th>
+
+                {showLoggiColumns && (
+                  <>
+                    <th className="px-4 py-3 text-left">Motivo Loggi</th>
+                    <th className="px-4 py-3 text-left">Status Loggi</th>
+                  </>
                 )}
+
                 <th className="px-4 py-3 text-left">Cód rastreio</th>
                 <th className="px-4 py-3 text-left">Detalhes</th>
               </tr>
@@ -785,7 +1087,6 @@ export default function EnviosPage() {
                           { value: "Enviado", label: "Enviado" },
                           { value: "Entregue", label: "Entregue" },
                           { value: "Devolucao", label: "Devolução" },
-                          { value: "Extravio", label: "Extravio" },
                         ]}
                         tone={toneEnvio(item.status_envio)}
                       />
@@ -804,7 +1105,8 @@ export default function EnviosPage() {
                               },
                               { value: "Pendente", label: "Pendente" },
                               { value: "Pago", label: "Pago" },
-                              { value: "Não Pago", label: "Não Pago" },
+                              { value: "Não Pago", label: "Calote" },
+                              { value: "Extravio", label: "Extravio" },
                             ]}
                             tone={tonePagamento(item.status_pagamento)}
                           />
@@ -815,19 +1117,51 @@ export default function EnviosPage() {
                         </span>
                       )}
                     </td>
-                    {active === "Extravio" && (
-                      <td className="px-4 py-3">
-                        <Select
-                          value={item.status_extraviado || "Pendente"}
-                          onChange={(v) => onChangeExtraviado(item, v)}
-                          options={[
-                            { value: "Pendente", label: "Pendente" },
-                            { value: "Aberto", label: "Aberto" },
-                            { value: "Finalizado", label: "Finalizado" },
-                          ]}
-                          tone="warning"
-                        />
-                      </td>
+
+                    {showLoggiColumns && (
+                      <>
+                        <td className="px-4 py-3">
+                          <Select
+                            value={
+                              item.loggi_motivo ||
+                              defaultLoggiMotivoByPagamento(
+                                item.status_pagamento,
+                              )
+                            }
+                            onChange={(v) => onChangeLoggiMotivo(item, v)}
+                            options={[
+                              { value: "", label: "Selecionar" },
+                              {
+                                value: "Cliente não pagou",
+                                label: "Cliente não pagou",
+                              },
+                              {
+                                value: "Cliente não recebeu",
+                                label: "Cliente não recebeu",
+                              },
+                            ]}
+                            tone="neutral"
+                          />
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <Select
+                            value={item.loggi_status || ""}
+                            onChange={(v) => onChangeLoggiStatus(item, v)}
+                            options={[
+                              { value: "", label: "Sem status" },
+                              { value: "Em análise", label: "Em análise" },
+                              {
+                                value: "Aguardando reembolso",
+                                label: "Aguardando reembolso",
+                              },
+                              { value: "Reembolsado", label: "Reembolsado" },
+                              { value: "Não aprovado", label: "Não aprovado" },
+                            ]}
+                            tone={toneLoggiStatus(item.loggi_status)}
+                          />
+                        </td>
+                      </>
                     )}
 
                     <td className="px-4 py-3 font-mono text-xs text-zinc-700">
@@ -867,6 +1201,18 @@ export default function EnviosPage() {
         onOpenChange={setPayOpen}
         cliente={payCtx}
         onConfirm={confirmarPagamento}
+      />
+      <LoggiRefundDialog
+        open={loggiRefundOpen}
+        onOpenChange={(open) => {
+          setLoggiRefundOpen(open);
+
+          if (!open) {
+            setLoggiRefundCtx(null);
+          }
+        }}
+        pedido={loggiRefundCtx}
+        onConfirm={confirmarReembolsoLoggi}
       />
 
       {templateMassOpen && (
@@ -1201,5 +1547,17 @@ function tonePagamento(v?: string): any {
   if (s === "Aguardando Entrega") return "info";
   if (s === "Pendente") return "warning";
   if (s === "Não Pago") return "danger";
+  if (s === "Extravio") return "danger";
+  return "neutral";
+}
+
+function toneLoggiStatus(v?: string): any {
+  const s = String(v || "");
+
+  if (s === "Em análise") return "warning";
+  if (s === "Aguardando reembolso") return "info";
+  if (s === "Não aprovado") return "danger";
+  if (s === "Reembolsado") return "success";
+
   return "neutral";
 }

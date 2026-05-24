@@ -1,6 +1,7 @@
 "use client";
 
 import { ClientSheet } from "@/components/atendimento/client-sheet";
+import { PaymentDialog } from "@/components/envios/payment-dialog";
 import { apiJson } from "@/lib/api";
 
 import {
@@ -112,6 +113,8 @@ type ChatItem = {
   phone: string;
   tag?: string;
   pipelineStatus: ClientPipelineStatus;
+  loggi_status?: string;
+loggi_motivo?: string;
   lastMessage: string;
   lastTime: string;
   unread?: number;
@@ -124,6 +127,23 @@ type ChatItem = {
   codigo_rastreio?: string;
   messages: ChatMessage[];
 };
+
+type WhatsappPaymentContext = {
+  id: string;
+  nome: string;
+  valor_total: number;
+};
+
+function parseCurrencyBRToNumber(value?: string) {
+  const normalized = String(value || "")
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .trim();
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 const STATUS_META: Record<
   Exclude<ClientPipelineStatus, "">,
@@ -773,6 +793,8 @@ export default function WhatsAppPage() {
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
+  const [payCtx, setPayCtx] = useState<WhatsappPaymentContext | null>(null);
   const [openActionCategories, setOpenActionCategories] = useState({
     primeiro_atendimento: true,
     cobranca: false,
@@ -787,7 +809,7 @@ export default function WhatsAppPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollToBottomRef = useRef(false);
-  
+
   const initialUrlParamsHandledRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -795,6 +817,7 @@ export default function WhatsAppPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const templateStatusRefreshTimersRef = useRef<number[]>([]);
 
   async function deleteConversationFromView(conversationId: string) {
     if (!selectedChat) return;
@@ -855,6 +878,8 @@ export default function WhatsAppPage() {
           phone: item.phone,
           tag: item.product || "",
           pipelineStatus: item.pipelineStatus || "",
+          loggi_status: item.loggi_status || "",
+loggi_motivo: item.loggi_motivo || "",
           lastMessage: item.lastMessage || "",
           lastTime: item.lastTime || item.updatedAt || item.createdAt || "",
           unread: item.unread || 0,
@@ -919,6 +944,21 @@ export default function WhatsAppPage() {
     }
   }
 
+  function scheduleTemplateStatusRefresh(conversationId: string) {
+    if (!conversationId) return;
+
+    const refreshDelays = [2000, 5000, 10000, 20000];
+
+    refreshDelays.forEach((delay) => {
+      const timerId = window.setTimeout(async () => {
+        await loadMessages(conversationId, false);
+        await loadConversations();
+      }, delay);
+
+      templateStatusRefreshTimersRef.current.push(timerId);
+    });
+  }
+
   function toggleActionCategory(category: keyof typeof openActionCategories) {
     setOpenActionCategories((prev) => ({
       ...prev,
@@ -964,8 +1004,13 @@ export default function WhatsAppPage() {
         "Template enviado. Aguardando confirmação do WhatsApp.",
       );
 
-      await loadMessages(response.conversationId || selectedChat.id, true);
+      const conversationIdToRefresh =
+        response.conversationId || selectedChat.id;
+
+      await loadMessages(conversationIdToRefresh, true);
       await loadConversations();
+
+      scheduleTemplateStatusRefresh(conversationIdToRefresh);
     } catch (error) {
       console.error(`Erro ao enviar template ${templateName}:`, error);
 
@@ -1174,6 +1219,14 @@ export default function WhatsAppPage() {
 
   useEffect(() => {
     loadConversations();
+
+    return () => {
+      templateStatusRefreshTimersRef.current.forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+
+      templateStatusRefreshTimersRef.current = [];
+    };
   }, []);
 
   useEffect(() => {
@@ -1324,6 +1377,26 @@ export default function WhatsAppPage() {
   async function updateSelectedPipelineStatus(newStatus: ClientPipelineStatus) {
     if (!selectedChat) return;
 
+    if (newStatus === "pago") {
+      if (!selectedChat.clientId) {
+        showToast(
+          "error",
+          "Não foi possível confirmar o pagamento: conversa sem cliente vinculado.",
+        );
+        return;
+      }
+
+      setPayCtx({
+        id: selectedChat.clientId,
+        nome: selectedChat.name,
+        valor_total: parseCurrencyBRToNumber(selectedChat.amount),
+      });
+
+      setPayOpen(true);
+      setIsActionsOpen(false);
+      return;
+    }
+
     setChats((prev) =>
       prev.map((chat) =>
         chat.id === selectedChat.id
@@ -1338,6 +1411,45 @@ export default function WhatsAppPage() {
     setIsActionsOpen(false);
 
     try {
+      if (selectedChat.clientId) {
+  if (newStatus === "calote") {
+    await apiJson(`/clientes/${selectedChat.clientId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        status_pagamento: "Não Pago",
+      }),
+    });
+
+    await loadConversations();
+    return;
+  }
+
+  if (newStatus === "extravio") {
+    await apiJson(`/clientes/${selectedChat.clientId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        status_pagamento: "Extravio",
+        loggi_motivo: "Cliente não recebeu",
+      }),
+    });
+
+    await loadConversations();
+    return;
+  }
+
+  if (newStatus === "a_pagar") {
+    await apiJson(`/clientes/${selectedChat.clientId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        status_pagamento: "Pendente",
+      }),
+    });
+
+    await loadConversations();
+    return;
+  }
+}
+
       await apiJson(`/whatsapp/conversations/${selectedChat.id}/status`, {
         method: "PUT",
         body: JSON.stringify({
@@ -1348,7 +1460,60 @@ export default function WhatsAppPage() {
       await loadConversations();
     } catch (error) {
       console.error("Erro ao atualizar andamento:", error);
-      alert("Erro ao atualizar andamento");
+
+      const message =
+        error instanceof Error ? error.message : "Erro ao atualizar andamento.";
+
+      showToast("error", message);
+    }
+  }
+
+  async function confirmarPagamentoWhatsapp(payload: {
+    valor_pago?: number;
+    data_pagamento: string;
+    origem_pagamento: string;
+  }) {
+    if (!payCtx) return;
+
+    const dataISO = payload.data_pagamento
+      ? new Date(`${payload.data_pagamento}T12:00:00-03:00`).toISOString()
+      : new Date().toISOString();
+
+    try {
+      await apiJson(`/clientes/${payCtx.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          status_pagamento: "Pago",
+          data_pagamento: dataISO,
+          origem_pagamento: payload.origem_pagamento,
+          valor_pago: payload.valor_pago,
+        }),
+      });
+
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.clientId === payCtx.id
+            ? {
+                ...chat,
+                pipelineStatus: "pago",
+              }
+            : chat,
+        ),
+      );
+
+      setPayOpen(false);
+      setPayCtx(null);
+
+      await loadConversations();
+
+      showToast("success", "Pagamento confirmado com sucesso.");
+    } catch (error) {
+      console.error("Erro ao confirmar pagamento pelo WhatsApp:", error);
+
+      const message =
+        error instanceof Error ? error.message : "Erro ao confirmar pagamento.";
+
+      showToast("error", message);
     }
   }
 
@@ -1800,6 +1965,7 @@ export default function WhatsAppPage() {
 
       await loadMessages(selectedChat.id, true);
       await loadConversations();
+      scheduleTemplateStatusRefresh(selectedChat.id);
     } catch (error) {
       console.error("Erro ao enviar template confirmar_pedido:", error);
 
@@ -1864,8 +2030,13 @@ export default function WhatsAppPage() {
           "Template de rastreio enviado. Aguardando confirmação do WhatsApp.",
         );
 
-        await loadMessages(response.conversationId || selectedChat.id, true);
+        const conversationIdToRefresh =
+          response.conversationId || selectedChat.id;
+
+        await loadMessages(conversationIdToRefresh, true);
         await loadConversations();
+
+        scheduleTemplateStatusRefresh(conversationIdToRefresh);
 
         return;
       } catch (error) {
@@ -1914,8 +2085,13 @@ export default function WhatsAppPage() {
         "Template de rastreio enviado. Aguardando confirmação do WhatsApp.",
       );
 
-      await loadMessages(response.conversationId || selectedChat.id, true);
+      const conversationIdToRefresh =
+        response.conversationId || selectedChat.id;
+
+      await loadMessages(conversationIdToRefresh, true);
       await loadConversations();
+
+      scheduleTemplateStatusRefresh(conversationIdToRefresh);
     } catch (error) {
       console.error("Erro ao enviar template cod_rastreio:", error);
 
@@ -2101,17 +2277,17 @@ Correto?`;
                       {filteredChats.length} conversa(s)
                     </div>
                   </div>
-                   <button
-                          onClick={() => setIsFullscreen((prev) => !prev)}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-zinc-600 transition hover:bg-zinc-100"
-                          title="Tela cheia"
-                        >
-                          {isFullscreen ? (
-                            <Minimize2 className="h-5 w-5" />
-                          ) : (
-                            <Maximize2 className="h-5 w-5" />
-                          )}
-                        </button>
+                  <button
+                    onClick={() => setIsFullscreen((prev) => !prev)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-zinc-600 transition hover:bg-zinc-100"
+                    title="Tela cheia"
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="h-5 w-5" />
+                    ) : (
+                      <Maximize2 className="h-5 w-5" />
+                    )}
+                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setIsFilterMenuOpen((prev) => !prev)}
@@ -2260,6 +2436,11 @@ Correto?`;
                                   {pipelineMeta.label}
                                 </span>
                               )}
+                              {chat.loggi_status && (
+  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+    Loggi: {chat.loggi_status}
+  </span>
+)}
                             </div>
 
                             {!!chat.unread && (
@@ -2332,6 +2513,16 @@ Correto?`;
                                 {selectedStatusMeta.label}
                               </span>
                             )}
+                            {selectedChat?.loggi_status && (
+  <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
+    Loggi: {selectedChat.loggi_status}
+  </span>
+)}
+{selectedChat?.loggi_motivo && (
+  <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-600">
+    {selectedChat.loggi_motivo}
+  </span>
+)}
                           </div>
                         </div>
                       </div>
@@ -2352,8 +2543,6 @@ Correto?`;
                         >
                           <Settings2 className="h-5 w-5" />
                         </button>
-
-                       
                       </div>
                     </div>
                   </header>
@@ -3074,6 +3263,15 @@ Correto?`;
                       </button>
                     ))}
                   </div>
+                  {selectedChat?.pipelineStatus && (
+                    <button
+                      onClick={() => updateSelectedPipelineStatus("")}
+                      className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-sm font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+                    >
+                      <X className="h-4 w-4" />
+                      Limpar status
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -3143,7 +3341,18 @@ Correto?`;
             </div>
           </div>
         )}
+        <PaymentDialog
+          open={payOpen}
+          onOpenChange={(open) => {
+            setPayOpen(open);
 
+            if (!open) {
+              setPayCtx(null);
+            }
+          }}
+          cliente={payCtx}
+          onConfirm={confirmarPagamentoWhatsapp}
+        />
         <ClientSheet
           open={sheetOpen}
           onOpenChange={setSheetOpen}
