@@ -114,7 +114,7 @@ type ChatItem = {
   tag?: string;
   pipelineStatus: ClientPipelineStatus;
   loggi_status?: string;
-loggi_motivo?: string;
+  loggi_motivo?: string;
   lastMessage: string;
   lastTime: string;
   unread?: number;
@@ -879,7 +879,7 @@ export default function WhatsAppPage() {
           tag: item.product || "",
           pipelineStatus: item.pipelineStatus || "",
           loggi_status: item.loggi_status || "",
-loggi_motivo: item.loggi_motivo || "",
+          loggi_motivo: item.loggi_motivo || "",
           lastMessage: item.lastMessage || "",
           lastTime: item.lastTime || item.updatedAt || item.createdAt || "",
           unread: item.unread || 0,
@@ -899,30 +899,16 @@ loggi_motivo: item.loggi_motivo || "",
           messages: [],
         }));
 
-      setChats((prev) => {
-  const mergedChats = mappedChats.map((newChat) => {
-    const oldChat = prev.find((chat) => chat.id === newChat.id);
+      setChats((prev) =>
+        mappedChats.map((newChat) => {
+          const oldChat = prev.find((chat) => chat.id === newChat.id);
 
-    return {
-      ...newChat,
-      messages: oldChat?.messages || [],
-    };
-  });
-
-  // ✅ Segurança: se a conversa selecionada sumir momentaneamente da API,
-  // mantém ela na tela para não fechar o atendimento sozinho.
-  if (selectedId && !mergedChats.some((chat) => chat.id === selectedId)) {
-    const selectedChatFromPreviousState = prev.find(
-      (chat) => chat.id === selectedId,
-    );
-
-    if (selectedChatFromPreviousState) {
-      return [selectedChatFromPreviousState, ...mergedChats];
-    }
-  }
-
-  return mergedChats;
-});
+          return {
+            ...newChat,
+            messages: oldChat?.messages || [],
+          };
+        }),
+      );
 
       if (!initialUrlParamsHandledRef.current) {
         initialUrlParamsHandledRef.current = true;
@@ -1211,11 +1197,7 @@ loggi_motivo: item.loggi_motivo || "",
     });
   }, [search, statusFilter, chats]);
 
-  const selectedChat = useMemo(() => {
-  if (!selectedId) return null;
-
-  return chats.find((chat) => chat.id === selectedId) ?? null;
-}, [chats, selectedId]);
+  const selectedChat = chats.find((chat) => chat.id === selectedId) ?? null;
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -1254,15 +1236,13 @@ loggi_motivo: item.loggi_motivo || "",
     }
   }, [selectedId]);
 
-  useEffect(() => {
+ useEffect(() => {
   if (!selectedId) return;
 
   const interval = window.setInterval(() => {
     loadMessages(selectedId, false);
-
-    // ✅ Atualiza lista sem derrubar a conversa aberta
     loadConversations();
-  }, 8000);
+  }, 5000);
 
   return () => window.clearInterval(interval);
 }, [selectedId]);
@@ -1432,43 +1412,43 @@ loggi_motivo: item.loggi_motivo || "",
 
     try {
       if (selectedChat.clientId) {
-  if (newStatus === "calote") {
-    await apiJson(`/clientes/${selectedChat.clientId}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        status_pagamento: "Não Pago",
-      }),
-    });
+        if (newStatus === "calote") {
+          await apiJson(`/clientes/${selectedChat.clientId}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              status_pagamento: "Não Pago",
+            }),
+          });
 
-    await loadConversations();
-    return;
-  }
+          await loadConversations();
+          return;
+        }
 
-  if (newStatus === "extravio") {
-    await apiJson(`/clientes/${selectedChat.clientId}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        status_pagamento: "Extravio",
-        loggi_motivo: "Cliente não recebeu",
-      }),
-    });
+        if (newStatus === "extravio") {
+          await apiJson(`/clientes/${selectedChat.clientId}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              status_pagamento: "Extravio",
+              loggi_motivo: "Cliente não recebeu",
+            }),
+          });
 
-    await loadConversations();
-    return;
-  }
+          await loadConversations();
+          return;
+        }
 
-  if (newStatus === "a_pagar") {
-    await apiJson(`/clientes/${selectedChat.clientId}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        status_pagamento: "Pendente",
-      }),
-    });
+        if (newStatus === "a_pagar") {
+          await apiJson(`/clientes/${selectedChat.clientId}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              status_pagamento: "Pendente",
+            }),
+          });
 
-    await loadConversations();
-    return;
-  }
-}
+          await loadConversations();
+          return;
+        }
+      }
 
       await apiJson(`/whatsapp/conversations/${selectedChat.id}/status`, {
         method: "PUT",
@@ -2457,10 +2437,10 @@ Correto?`;
                                 </span>
                               )}
                               {chat.loggi_status && (
-  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
-    Loggi: {chat.loggi_status}
-  </span>
-)}
+                                <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                                  Loggi: {chat.loggi_status}
+                                </span>
+                              )}
                             </div>
 
                             {!!chat.unread && (
@@ -2534,15 +2514,15 @@ Correto?`;
                               </span>
                             )}
                             {selectedChat?.loggi_status && (
-  <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
-    Loggi: {selectedChat.loggi_status}
-  </span>
-)}
-{selectedChat?.loggi_motivo && (
-  <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-600">
-    {selectedChat.loggi_motivo}
-  </span>
-)}
+                              <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
+                                Loggi: {selectedChat.loggi_status}
+                              </span>
+                            )}
+                            {selectedChat?.loggi_motivo && (
+                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-600">
+                                {selectedChat.loggi_motivo}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
