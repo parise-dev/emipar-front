@@ -899,16 +899,30 @@ loggi_motivo: item.loggi_motivo || "",
           messages: [],
         }));
 
-      setChats((prev) =>
-        mappedChats.map((newChat) => {
-          const oldChat = prev.find((chat) => chat.id === newChat.id);
+      setChats((prev) => {
+  const mergedChats = mappedChats.map((newChat) => {
+    const oldChat = prev.find((chat) => chat.id === newChat.id);
 
-          return {
-            ...newChat,
-            messages: oldChat?.messages || [],
-          };
-        }),
-      );
+    return {
+      ...newChat,
+      messages: oldChat?.messages || [],
+    };
+  });
+
+  // ✅ Segurança: se a conversa selecionada sumir momentaneamente da API,
+  // mantém ela na tela para não fechar o atendimento sozinho.
+  if (selectedId && !mergedChats.some((chat) => chat.id === selectedId)) {
+    const selectedChatFromPreviousState = prev.find(
+      (chat) => chat.id === selectedId,
+    );
+
+    if (selectedChatFromPreviousState) {
+      return [selectedChatFromPreviousState, ...mergedChats];
+    }
+  }
+
+  return mergedChats;
+});
 
       if (!initialUrlParamsHandledRef.current) {
         initialUrlParamsHandledRef.current = true;
@@ -1197,7 +1211,11 @@ loggi_motivo: item.loggi_motivo || "",
     });
   }, [search, statusFilter, chats]);
 
-  const selectedChat = chats.find((chat) => chat.id === selectedId) ?? null;
+  const selectedChat = useMemo(() => {
+  if (!selectedId) return null;
+
+  return chats.find((chat) => chat.id === selectedId) ?? null;
+}, [chats, selectedId]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -1237,15 +1255,17 @@ loggi_motivo: item.loggi_motivo || "",
   }, [selectedId]);
 
   useEffect(() => {
-    if (!selectedId) return;
+  if (!selectedId) return;
 
-    const interval = window.setInterval(() => {
-      loadMessages(selectedId, false);
-      loadConversations();
-    }, 5000);
+  const interval = window.setInterval(() => {
+    loadMessages(selectedId, false);
 
-    return () => window.clearInterval(interval);
-  }, [selectedId]);
+    // ✅ Atualiza lista sem derrubar a conversa aberta
+    loadConversations();
+  }, 8000);
+
+  return () => window.clearInterval(interval);
+}, [selectedId]);
 
   function scrollChatToBottom(behavior: ScrollBehavior = "auto") {
     window.setTimeout(() => {
