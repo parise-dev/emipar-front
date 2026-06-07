@@ -779,8 +779,12 @@ export default function WhatsAppPage() {
   const [manualCodigoRastreio, setManualCodigoRastreio] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<
-    "todos" | "nao_lidas" | ClientPipelineStatus
-  >("todos");
+    "atendimento" | "todos" | "nao_lidas" | ClientPipelineStatus
+  >("atendimento");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMoreChats, setHasMoreChats] = useState(false);
+  const [todosStartDate, setTodosStartDate] = useState("");
+  const [todosEndDate, setTodosEndDate] = useState("");
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
@@ -850,14 +854,45 @@ export default function WhatsAppPage() {
     }
   }
 
-  async function loadConversations() {
+  async function loadConversations(options?: { page?: number; append?: boolean }) {
     try {
       setLoadingChats(true);
+
+      const pageToLoad = options?.page || 1;
+      const params = new URLSearchParams();
+      params.set("filter", statusFilter);
+      params.set("page", String(pageToLoad));
+
+      if (statusFilter === "todos") {
+        params.set("days", "7");
+        params.set("limit", "50");
+
+        if (todosStartDate) {
+          params.set("startDate", todosStartDate);
+        }
+
+        if (todosEndDate) {
+          params.set("endDate", todosEndDate);
+        }
+      }
+
+      if (["pago", "calote", "extravio"].includes(statusFilter)) {
+        params.set("limit", "50");
+      }
+
+      if (statusFilter === "atendimento") {
+        params.set("atendimentoDays", "3");
+      }
+
+      if (search.trim().length >= 3) {
+        params.set("q", search.trim());
+      }
 
       const response = await apiJson<{
         success: boolean;
         data: any[];
-      }>("/whatsapp/conversations");
+        pagination?: { page: number; limit: number; total: number; hasMore: boolean };
+      }>(`/whatsapp/conversations?${params.toString()}`);
 
       const mappedChats: ChatItem[] = response.data
         .filter((item) => !item.deleted && !item.deletedAt)
@@ -899,16 +934,28 @@ export default function WhatsAppPage() {
           messages: [],
         }));
 
-      setChats((prev) =>
-        mappedChats.map((newChat) => {
+      setChats((prev) => {
+        const mappedWithOldMessages = mappedChats.map((newChat) => {
           const oldChat = prev.find((chat) => chat.id === newChat.id);
 
           return {
             ...newChat,
             messages: oldChat?.messages || [],
           };
-        }),
-      );
+        });
+
+        if (!options?.append) {
+          return mappedWithOldMessages;
+        }
+
+        const currentById = new Map(prev.map((chat) => [chat.id, chat]));
+        mappedWithOldMessages.forEach((chat) => currentById.set(chat.id, chat));
+
+        return Array.from(currentById.values());
+      });
+
+      setCurrentPage(pageToLoad);
+      setHasMoreChats(Boolean(response.pagination?.hasMore));
 
       if (!initialUrlParamsHandledRef.current) {
         initialUrlParamsHandledRef.current = true;
@@ -1056,7 +1103,7 @@ export default function WhatsAppPage() {
       const response = await apiJson<{
         success: boolean;
         data: any[];
-      }>(`/whatsapp/conversations/${conversationId}/messages`);
+      }>(`/whatsapp/conversations/${conversationId}/messages?limit=80`);
 
       const mappedMessages: ChatMessage[] = response.data
         .filter((msg) => !msg.deleted && !msg.deletedAt)
@@ -1190,6 +1237,7 @@ export default function WhatsAppPage() {
 
       const matchesStatus =
         statusFilter === "todos" ||
+        statusFilter === "atendimento" ||
         (statusFilter === "nao_lidas" && (chat.unread || 0) > 0) ||
         chat.pipelineStatus === statusFilter;
 
@@ -1218,8 +1266,14 @@ export default function WhatsAppPage() {
   }, [isRecording]);
 
   useEffect(() => {
-    loadConversations();
+    const debounce = window.setTimeout(() => {
+      loadConversations({ page: 1, append: false });
+    }, search.trim() ? 350 : 0);
 
+    return () => window.clearTimeout(debounce);
+  }, [statusFilter, search, todosStartDate, todosEndDate]);
+
+  useEffect(() => {
     return () => {
       templateStatusRefreshTimersRef.current.forEach((timerId) => {
         window.clearTimeout(timerId);
@@ -1241,7 +1295,6 @@ export default function WhatsAppPage() {
 
   const interval = window.setInterval(() => {
     loadMessages(selectedId, false);
-    loadConversations();
   }, 5000);
 
   return () => window.clearInterval(interval);
@@ -2305,30 +2358,35 @@ Correto?`;
 
                         {(
                           [
-                            "todos",
+                            "atendimento",
                             "nao_lidas",
                             "enviado",
                             "a_pagar",
                             "pago",
                             "calote",
                             "extravio",
+                            "todos",
                           ] as const
                         ).map((status) => {
                           const active = statusFilter === status;
                           const label =
-                            status === "todos"
-                              ? "Todos"
-                              : status === "nao_lidas"
-                                ? "Não lidas"
-                                : STATUS_META[
-                                    status as Exclude<ClientPipelineStatus, "">
-                                  ].label;
+                            status === "atendimento"
+                              ? "Atendimento"
+                              : status === "todos"
+                                ? "Todos"
+                                : status === "nao_lidas"
+                                  ? "Não lidas"
+                                  : STATUS_META[
+                                      status as Exclude<ClientPipelineStatus, "">
+                                    ].label;
 
                           return (
                             <button
                               key={status}
                               onClick={() => {
                                 setStatusFilter(status);
+                                setCurrentPage(1);
+                                setHasMoreChats(false);
                                 setIsFilterMenuOpen(false);
                               }}
                               className={[
@@ -2358,6 +2416,36 @@ Correto?`;
                     className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
                   />
                 </label>
+
+                {statusFilter === "todos" && (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                      Início
+                      <input
+                        type="date"
+                        value={todosStartDate}
+                        onChange={(e) => {
+                          setTodosStartDate(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-zinc-700 outline-none"
+                      />
+                    </label>
+
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                      Fim
+                      <input
+                        type="date"
+                        value={todosEndDate}
+                        onChange={(e) => {
+                          setTodosEndDate(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-zinc-700 outline-none"
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto">
@@ -2454,6 +2542,21 @@ Correto?`;
                     </button>
                   );
                 })}
+
+                {hasMoreChats && (
+                  <div className="p-4">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        loadConversations({ page: currentPage + 1, append: true })
+                      }
+                      disabled={loadingChats}
+                      className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {loadingChats ? "Carregando..." : "Carregar mais"}
+                    </button>
+                  </div>
+                )}
               </div>
             </aside>
 
