@@ -321,86 +321,202 @@ useEffect(() => {
           done: prev.done + 1,
           error: prev.error + 1,
         }));
+
         continue;
       }
 
       try {
-        const res = await fetch(`${API}/whatsapp/send-template/confirmar-pedido`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: cliente.phone,
-            clientId: cliente.id,
-            conversationId: "",
-            nome: cliente.nome || "Cliente",
-            nome_rep: "Carlos",
-            emprs: "EMIPAR LIFE",
-            qtd: `${cliente.quantidade || 1} ${cliente.produto || "ERONMAX"}`,
-            rua: cliente.endereco?.logradouro || "Endereço não informado",
-            cidade:
-              `${cliente.endereco?.bairro || ""} ${cliente.endereco?.localidade || ""} ${cliente.endereco?.uf || ""}`.trim() ||
-              "Cidade não informada",
-            n: cliente.endereco?.numero || "S/N",
-          }),
-        });
+        // =====================================================
+        // DADOS ORIGINAIS DO CHECKOUT
+        // =====================================================
 
-        const data = await res.json().catch(() => null);
+        const nome = cliente.nome;
+
+        const quantidade = cliente.quantidade;
+
+        const produto = cliente.produto || "";
+
+        const logradouro =
+          cliente.endereco?.logradouro || "";
+
+        const localidade =
+          cliente.endereco?.localidade || "";
+
+        const numero =
+          cliente.endereco?.numero || "";
+
+        // =====================================================
+        // FORMATA PEDIDO
+        // Exemplo: 2 ERONMAX
+        // =====================================================
+
+        const pedido =
+          `${quantidade} ${produto}`.trim();
+
+        // =====================================================
+        // FORMATA ENDEREÇO
+        // Exemplo: Paulista, São Paulo, n° 71
+        // =====================================================
+
+        const enderecoBase = [
+          logradouro,
+          localidade,
+        ]
+          .filter(Boolean)
+          .join(", ");
+
+        const enderecoCompleto = numero
+          ? `${enderecoBase}, n° ${numero}`
+          : enderecoBase;
+
+        // =====================================================
+        // TEMPLATE META:
+        //
+        // Olá, {{1}}
+        //
+        // {{2}}
+        //
+        // {{3}}
+        //
+        // Fico no aguardo da sua confirmação.
+        // =====================================================
+
+        // {{1}}
+        const variavelNome = nome;
+
+        // {{2}}
+        const variavelPedido =
+          `Aqui é o Carlos, da equipe da Emipar Life. Recebemos seu pedido de ${pedido} e ele será entregue no endereço abaixo:`;
+
+        // {{3}}
+        const variavelEndereco =
+          `📍 Rua: ${enderecoCompleto}`;
+
+        // =====================================================
+        // PREVIEW SALVO NO SEU SISTEMA
+        // Fica igual ao WhatsApp
+        // =====================================================
+
+        const textPreview = `Olá, ${variavelNome}
+
+${variavelPedido}
+
+${variavelEndereco}
+
+Fico no aguardo da sua confirmação.`;
+
+        // =====================================================
+        // ENVIA TEMPLATE PARA API
+        // =====================================================
+
+        const res = await fetch(
+          `${API}/whatsapp/send-template/generic`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type": "application/json",
+            },
+
+            body: JSON.stringify({
+              to: cliente.phone,
+
+              clientId: cliente.id,
+
+              conversationId: "",
+
+              templateName: "01_nottifica",
+
+              variables: [
+                variavelNome,
+                variavelPedido,
+                variavelEndereco,
+              ],
+
+              textPreview,
+            }),
+          },
+        );
+
+        const data = await res
+          .json()
+          .catch(() => null);
+
+        // =====================================================
+        // ERRO
+        // =====================================================
 
         if (!res.ok || !data?.success) {
-          throw new Error("Falha ao enviar");
+          throw new Error(
+            typeof data?.error === "string"
+              ? data.error
+              : data?.error?.error?.message ||
+                "Falha ao enviar template",
+          );
         }
 
-        /**
-         * Só atualiza para Andamento quando:
-         * - já existe conversa no WhatsApp interno;
-         * - backend retornou conversationId;
-         * - não ficou pendente aguardando webhook;
-         * - pedido ainda está Novo/Aberto.
-         *
-         * Cliente novo com pending=true será atualizado pelo webhook,
-         * somente se a Meta confirmar envio/entrega/leitura.
-         */
+        // =====================================================
+        // MANTÉM SUA REGRA ATUAL:
+        // NOVO / ABERTO -> ANDAMENTO
+        // =====================================================
+
         if (
           !data?.pending &&
           data?.conversationId &&
-          (cliente.status_pedido === "Novo" || cliente.status_pedido === "Aberto")
+          (
+            cliente.status_pedido === "Novo" ||
+            cliente.status_pedido === "Aberto"
+          )
         ) {
-          await fetch(`${API}/clientes/${cliente.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              status_pedido: "Andamento",
-            }),
-          });
+          await fetch(
+            `${API}/clientes/${cliente.id}`,
+            {
+              method: "PUT",
+
+              headers: {
+                "Content-Type": "application/json",
+              },
+
+              body: JSON.stringify({
+                status_pedido: "Andamento",
+              }),
+            },
+          );
 
           setOrders((prev) =>
-            prev.map((pedido) =>
-              pedido.id === cliente.id
-                ? { ...pedido, status_pedido: "Andamento" }
-                : pedido,
+            prev.map((pedidoAtual) =>
+              pedidoAtual.id === cliente.id
+                ? {
+                    ...pedidoAtual,
+                    status_pedido: "Andamento",
+                  }
+                : pedidoAtual,
             ),
           );
         }
+
+        // =====================================================
+        // SUCESSO
+        // =====================================================
 
         setMassProgress((prev) => ({
           ...prev,
           done: prev.done + 1,
           success: prev.success + 1,
         }));
-      } catch {
+      } catch (error) {
+        console.error(
+          `Erro ao enviar template para ${cliente.nome}:`,
+          error,
+        );
+
         setMassProgress((prev) => ({
           ...prev,
           done: prev.done + 1,
           error: prev.error + 1,
         }));
       }
-
-      await new Promise((resolve) => setTimeout(resolve, 900));
     }
-
-       setSelectedIds([]);
-
-    await loadOrders();
   } finally {
     setSendingMass(false);
   }
