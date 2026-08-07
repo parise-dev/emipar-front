@@ -1944,25 +1944,59 @@ export default function WhatsAppPage() {
     }
   }
 
-  function parseEndereco(address?: string) {
-    const fallback = {
-      rua: "Endereço não informado",
-      cidade: "Cidade não informada",
-      numero: "S/N",
-    };
+  function parseEndereco(
+  address?:
+    | string
+    | {
+        cep?: string;
+        logradouro?: string;
+        numero?: string;
+        bairro?: string;
+        complemento?: string;
+        localidade?: string;
+        cidade?: string;
+        estado?: string;
+        uf?: string;
+        obs?: string;
+      },
+) {
+  const fallback = {
+    rua: "Endereço não informado",
+    cidade: "Cidade não informada",
+    numero: "S/N",
+  };
 
-    if (!address) return fallback;
+  if (!address) return fallback;
 
-    const partes = address.split(",").map((p) => p.trim());
-
+  // Formato novo: endereço salvo como objeto
+  if (typeof address === "object") {
     return {
-      rua: partes[0] || fallback.rua,
-      numero:
-        partes[1]?.replace("n°", "").replace("N:", "").trim() ||
-        fallback.numero,
-      cidade: partes.slice(2).join(", ") || partes[1] || fallback.cidade,
+      rua: address.logradouro || fallback.rua,
+      numero: address.numero || fallback.numero,
+      cidade:
+        address.localidade ||
+        address.cidade ||
+        address.estado ||
+        fallback.cidade,
     };
   }
+
+  // Formato antigo: endereço salvo como string
+  const partes = address.split(",").map((p) => p.trim());
+
+  return {
+    rua: partes[0] || fallback.rua,
+
+    numero:
+      partes[1]?.replace("n°", "").replace("N:", "").trim() ||
+      fallback.numero,
+
+    cidade:
+      partes.slice(2).join(", ") ||
+      partes[1] ||
+      fallback.cidade,
+  };
+}
 
   function showToast(type: "error" | "success", message: string) {
     if (toastTimeoutRef.current) {
