@@ -334,7 +334,7 @@ useEffect(() => {
 
         const quantidade = cliente.quantidade;
 
-        const produto = cliente.produto || "";
+        const produto = cliente.produto || "ERONMAX";
 
         const logradouro =
           cliente.endereco?.logradouro || "";
